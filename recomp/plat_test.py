@@ -68,10 +68,10 @@ if a.png:
             if ok:
                 break
         print(f"last frame ({f}) saved as {a.png}" if ok else "could not write " + a.png)
-    for f in frames:  # about 1 MB each: do not keep them
-        os.remove(os.path.join(shots, f))
     else:
         print("no frame was shown")
+    for f in frames:  # about 1 MB each: do not keep them
+        os.remove(os.path.join(shots, f))
 if a.audio and os.path.exists(a.audio):
     # dsound.c logs "audio device: <rate> Hz <channels> ch" when it opens SDL audio (16-bit samples)
     import array, re

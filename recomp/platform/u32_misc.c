@@ -25,6 +25,34 @@ __attribute__((weak)) void msg_post(u32 hwnd, u32 message, u32 wparam, u32 lpara
 
 /* ---- Keyboard, mouse and cursor ------------------------------------------------------ */
 
+struct KeyAlias {
+    u8 target_vk;
+    u8 alias_vk;
+};
+
+static const struct KeyAlias key_aliases[] = {
+    { 0x68 /* VK_NUMPAD8 */, 0x26 /* VK_UP */ },
+    { 0x65 /* VK_NUMPAD5 */, 0x28 /* VK_DOWN */ },
+    { 0x64 /* VK_NUMPAD4 */, 0x25 /* VK_LEFT */ },
+    { 0x66 /* VK_NUMPAD6 */, 0x27 /* VK_RIGHT */ },
+};
+
+static int bindings_use_arrow_keys(void)
+{
+    const u32 tables[2] = { 0x511c20u, 0x511ca0u };
+    for (int t = 0; t < 2; t++) {
+        u32 base = tables[t];
+        for (int i = 0; i < 14; i++) {
+            u32 dev = rd32(base + i * 8);
+            u32 vk = rd32(base + i * 8 + 4);
+            if (dev == 0 && (vk >= 0x25 && vk <= 0x28)) {
+                return 1;
+            }
+        }
+    }
+    return 0;
+}
+
 /* SHORT GetAsyncKeyState(int vKey) */
 static u32 imp_GetAsyncKeyState(Cpu *c)
 {
@@ -37,6 +65,16 @@ static u32 imp_GetAsyncKeyState(Cpu *c)
     if (vk == 0x10 /* VK_SHIFT */ && (vk_down[0xa0] || vk_down[0xa1])) down = 1;
     if (vk == 0x11 /* VK_CONTROL */ && (vk_down[0xa2] || vk_down[0xa3])) down = 1;
     if (vk == 0x12 /* VK_MENU */ && (vk_down[0xa4] || vk_down[0xa5])) down = 1;
+    if (!down && !bindings_use_arrow_keys()) {
+        for (size_t i = 0; i < sizeof(key_aliases) / sizeof(key_aliases[0]); i++) {
+            if (key_aliases[i].target_vk == vk) {
+                if (vk_down[key_aliases[i].alias_vk]) {
+                    down = 1;
+                    break;
+                }
+            }
+        }
+    }
     if (getenv("FCOP_TRACE_KEYS")) {  /* each key the game asks about, and every press it sees */
         static u8 seen[256];
         if (!seen[vk] || down) plat_log("GetAsyncKeyState(0x%02x) -> %s (from 0x%08x)", vk, down ? "down" : "up", rd32(c->r[4]));
@@ -57,6 +95,16 @@ static u32 imp_GetKeyState(Cpu *c)
     if (vk == 0x10 /* VK_SHIFT */ && (vk_down[0xa0] || vk_down[0xa1])) down = 1;
     if (vk == 0x11 /* VK_CONTROL */ && (vk_down[0xa2] || vk_down[0xa3])) down = 1;
     if (vk == 0x12 /* VK_MENU */ && (vk_down[0xa4] || vk_down[0xa5])) down = 1;
+    if (!down && !bindings_use_arrow_keys()) {
+        for (size_t i = 0; i < sizeof(key_aliases) / sizeof(key_aliases[0]); i++) {
+            if (key_aliases[i].target_vk == vk) {
+                if (vk_down[key_aliases[i].alias_vk]) {
+                    down = 1;
+                    break;
+                }
+            }
+        }
+    }
     return down ? 0x8000u : 0;
 }
 
