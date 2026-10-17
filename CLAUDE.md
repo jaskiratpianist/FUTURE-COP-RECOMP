@@ -173,8 +173,10 @@ own test run (`plat_test.py` is headless; `--png`, `--audio`, `--input`).
   specks; compare `FCOP_PIXFMT=565` with ColoringIsOff 0 and 1). Root cause not found yet:
   most 1998 cards were 565 and it worked there, so suspect the recompiled 565 code path
   (FUN_0045b1c0's 555/565 patch table at 0x48ea20, or other self-modifying code).
-- Intro movies use DirectShow (`CoCreateInstance` CLSID_FilterGraph); we return
-  E_NOINTERFACE and the game waits a few seconds, then skips them.
+- Videos (intro, HELP = cwrules.mpg, BRIEFING = brief*.mpg, fly-overs, credits) are MPEG-1
+  files in the CD's `Video` folder (host_path falls back to the parent of the game folder).
+  video.c implements the DirectShow filter graph on pl_mpeg; `FCOP_SKIP_VIDEOS=1` skips
+  them (plat_test.py does unless `--videos`, so the menu still appears after about 8 s).
 
 ## Next steps
 
@@ -199,7 +201,6 @@ own test run (`plat_test.py` is headless; `--png`, `--audio`, `--input`).
    resolution; (B) implement the 34 THRASH functions natively on OpenGL, using opengla.dll
    as the reference for their semantics. B gives the cleanest high-res and texture
    replacement path; decide with the user.
-5. Dialogs work (pause/resume, quit prompt, preferences). Still to check: Controller
-   Configuration key capture, Audio sliders (once dsound plays), Load/Save. Then native extras
-   (resolution, scaling, fullscreen, arrow/WASD keys) added to the Preferences dialog, and
-   the game's own menu font instead of font8x8.
+5. Open: the pause bar shows black behind it (the game clears the screen), the 565
+   Texture Coloring root cause, gamepads on real hardware, the game's own menu font instead
+   of font8x8.
