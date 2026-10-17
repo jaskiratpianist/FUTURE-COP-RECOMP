@@ -92,4 +92,12 @@ void rt_rdtsc(Cpu *c);
 u32  rt_in(Cpu *c, u32 port, int size);
 void rt_out(Cpu *c, u32 port, u32 v, int size);
 
+/* Guest threads take turns, as on the single-core PCs the game was written for (it has
+   races that only show up when its threads really run in parallel). rt_poll is set while
+   another guest thread waits for its turn; loop heads check it, so spin loops hand over too.
+   The acquire load also makes the compiler re-read guest memory after each check. */
+extern int rt_poll;
+void rt_yield(Cpu *c);
+#define POLL do { if (__builtin_expect(__atomic_load_n(&rt_poll, __ATOMIC_ACQUIRE), 0)) rt_yield(c); } while (0)
+
 #endif

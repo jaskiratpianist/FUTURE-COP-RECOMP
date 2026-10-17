@@ -78,6 +78,11 @@ package installed. Build: `./recomp/build.sh`; run: `build/recomp/fcop <game dir
   jump fallback (`dyn:`) for anything else.
 - x87 uses doubles (the CRT sets 53-bit precision), with an exact s64 shadow so the FPU
   memcpy idiom (fild/fistp qword) is lossless.
+- **Guest threads take turns** (core.c `turn_take`/`turn_give`): only one thread runs guest
+  code at a time, handing over at every import call and, when another thread waits, at loop
+  heads (`POLL` after every backward-jump label). The game has races that only show up when
+  its threads truly run in parallel (the async file reader at 0x415f30 and its callback
+  0x416bf0 share a one-slot mailbox; the main thread spin-waits on 0x4a03d8).
 - **Self-modifying code**: the software renderer (around 0x45b000-0x461000) patches
   immediates, displacements and jump targets in its own inner loops, and
   FUN_0045b1c0 rewrites code for the 555/565 pixel formats from a table at 0x48ea20.
@@ -91,10 +96,16 @@ package installed. Build: `./recomp/build.sh`; run: `build/recomp/fcop <game dir
   `recomp/difftest.py <addr> --trace N` prints the first instruction where Unicorn and the
   C disagree (builds a traced library with `-DRECOMP_TRACE`). Known, expected failures:
   0x45b1c0 (cpuid), 0x4742e0 (rdtsc), 0x47c070 (FPU exception flags), 0x4764d0 (`in`
-  on garbage input), 0x4532f0 (page-count difference).
+  on garbage input), 0x4532f0 (page-count difference), 0x45b6db (`fist` at 0x45bb30 on
+  random FPU values; not yet checked whether it matters).
 - Environment switches for the game: `FCOP_TRACE_API=1` (every import call with its
   caller), `FCOP_TRACE_MSG=1` (window messages), `FCOP_DD_LOG=1` (DirectDraw blits),
-  `FCOP_SHOT=build/shots/f%04d.ppm` (dump every presented frame; convert to PNG to look).
+  `FCOP_SHOT=build/shots/f%04d.ppm` (dump every presented frame; convert to PNG to look;
+  `FCOP_SHOT_LOG=1` logs frame numbers so they line up with other log lines),
+  `FCOP_TRACE_KEYS=1` (each key code GetAsyncKeyState is asked about, and every press seen),
+  `FCOP_INPUT="9000:click@484,303 28000:Keypad_8*3000"` (scripted input, ms after start: a
+  click at game coordinates, preceded by a mouse move, or an SDL key name held 100 ms or *N ms).
+  That example starts the first mission from the main menu and walks forward.
 - Static facts: `data/functions.json` plus capstone. The generated C has the original
   instruction as a comment on every line (`/* 45b7c6: jmp 0x45ba37 */`), so
   `grep "TR(0x45b7c6u)" build/recomp/gen/*.c` finds any instruction.
@@ -120,13 +131,22 @@ Workers quit when a blocked tool is denied (a shell `cat`, a URL fetch); just re
   `D:\FCopLAPD\Missions\...`; `host_path()` maps a leading `FCopLAPD` folder to the game directory.
 - SDL turns SIGTERM into SDL_QUIT, so killing the game with `timeout` makes it quit cleanly
   (ExitProcess in the log is not a crash).
+- Input: the menu is mouse-only (keys go to DefWindowProc) and picks the button under the last
+  WM_MOUSEMOVE, so a click without a move before it does nothing. In missions the game polls
+  GetAsyncKeyState; the default controls are the numeric keypad (8 forward, etc.), plus Ctrl,
+  Alt, Space, Tab, Z, M, Esc, F1-F6, F10 (bindings come from the registry). DirectInput is only
+  used to enumerate joysticks.
+- COM objects share one vtable per interface (core.c `com_vtable`): the game creates surfaces
+  and sound buffers constantly and thunks are never freed.
+- `neg ecx; jmp [ecx*4 + T]` (memcpy's tail) reads up to 7 entries *before* T; x86c handles it.
 - Intro movies use DirectShow (`CoCreateInstance` CLSID_FilterGraph); we return
   E_NOINTERFACE and the game waits a few seconds, then skips them.
 
 ## Next steps
 
-1. Menu input: check keyboard/mouse messages reach the game (u32_win.c's plat_pump and
-   DirectInput), navigate the menu, start a mission.
+1. Done: the menu works with the mouse and the first mission starts, renders and responds
+   to the keypad. Next: play longer (FCOP_INPUT scripts), check other missions and the
+   in-game Esc menu, map arrow keys/WASD as extra defaults later (preferences menu).
 2. Fix in-game crashes and rendering (expect more stub/offset bugs in Gemini's code;
    review ddraw.c, dsound.c, dinput.c against the DirectX 5 SDK layouts).
 3. Sound through dsound.c and SDL audio; music streaming uses the play/write cursors.

@@ -592,10 +592,85 @@ static void handle_sdl_event(const SDL_Event *e)
     }
 }
 
+/* FCOP_INPUT="5000:Down 6000:Return*500 9000:click@320,240": scripted input for headless tests.
+   Each item is milliseconds since the first pump, then an SDL key name (held for 100 ms, or
+   for *N ms; "_" stands for a space, as in Keypad_8) or a left click at game coordinates. */
+static void scripted_input(void)
+{
+    static const char *script;
+    static int inited;
+    static Uint32 t0;
+    static struct { Uint32 t; int down, x, y; SDL_Keycode k; } ev[256];  /* down: 0 up, 1 down, 2 mouse move */
+    static int n, next;
+    Uint32 now;
+    if (!inited) {
+        char buf[64];
+        const char *p;
+        inited = 1;
+        script = getenv("FCOP_INPUT");
+        t0 = SDL_GetTicks();
+        for (p = script; p && *p && n < 253; ) {
+            unsigned t;
+            int x, y, len = 0;
+            while (*p == ' ') p++;
+            if (!*p || sscanf(p, "%u:%63[^ ]%n", &t, buf, &len) != 2) break;
+            p += len;
+            if (sscanf(buf, "click@%d,%d", &x, &y) == 2) {
+                /* move there first (down = 2), as a real mouse does, then press and release */
+                ev[n].t = t >= 200 ? t - 200 : 0; ev[n].down = 2; ev[n].x = x; ev[n].y = y; ev[n].k = 0; n++;
+                ev[n] = ev[n - 1]; ev[n].t = t; ev[n].down = 1; n++;
+                ev[n] = ev[n - 1]; ev[n].t = t + 100; ev[n].down = 0; n++;
+            } else {
+                char *star = strchr(buf, '*');
+                unsigned hold = star ? (unsigned)atoi(star + 1) : 100;
+                SDL_Keycode k;
+                if (star) *star = 0;
+                for (char *q = buf; *q; q++) if (*q == '_') *q = ' ';  /* "Keypad_8" */
+                k = SDL_GetKeyFromName(buf);
+                if (k == SDLK_UNKNOWN) { plat_log("FCOP_INPUT: unknown key '%s'", buf); continue; }
+                ev[n].t = t; ev[n].down = 1; ev[n].k = k; n++;
+                ev[n] = ev[n - 1]; ev[n].t = t + hold; ev[n].down = 0; n++;
+            }
+        }
+        /* sort by time (insertion sort, the list is short) */
+        for (int i = 1; i < n; i++)
+            for (int j = i; j > 0 && ev[j].t < ev[j - 1].t; j--) {
+                __typeof__(ev[0]) tmp = ev[j]; ev[j] = ev[j - 1]; ev[j - 1] = tmp;
+            }
+    }
+    now = SDL_GetTicks() - t0;
+    while (next < n && ev[next].t <= now) {
+        SDL_Event e;
+        memset(&e, 0, sizeof e);
+        if (ev[next].k) {
+            e.type = ev[next].down ? SDL_KEYDOWN : SDL_KEYUP;
+            e.key.state = ev[next].down ? SDL_PRESSED : SDL_RELEASED;
+            e.key.keysym.sym = ev[next].k;
+            e.key.keysym.scancode = SDL_GetScancodeFromKey(ev[next].k);
+        } else if (ev[next].down == 2) {
+            e.type = SDL_MOUSEMOTION;
+            e.motion.x = ev[next].x;
+            e.motion.y = ev[next].y;
+        } else {
+            e.type = ev[next].down ? SDL_MOUSEBUTTONDOWN : SDL_MOUSEBUTTONUP;
+            e.button.button = SDL_BUTTON_LEFT;
+            e.button.state = ev[next].down ? SDL_PRESSED : SDL_RELEASED;
+            e.button.clicks = 1;
+            e.button.x = ev[next].x;
+            e.button.y = ev[next].y;
+        }
+        plat_log("FCOP_INPUT: %s %s at %u ms", ev[next].down == 2 ? "move" : ev[next].down ? "press" : "release",
+                 ev[next].k ? SDL_GetKeyName(ev[next].k) : "click", now);
+        handle_sdl_event(&e);
+        next++;
+    }
+}
+
 void plat_pump(void)
 {
     if (!sdl_inited) return;
     SDL_Event e;
+    scripted_input();
     while (SDL_PollEvent(&e)) {
         handle_sdl_event(&e);
     }

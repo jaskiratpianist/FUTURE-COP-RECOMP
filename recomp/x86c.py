@@ -83,7 +83,11 @@ class Func:
                         break
                 elif m == "jmp":
                     if op0.type == x86.X86_OP_MEM and op0.mem.index != 0 and op0.mem.scale == 4 and op0.mem.base == 0:
-                        tbl = self.table(op0.mem.disp & 0xFFFFFFFF)
+                        # "neg ecx; jmp [ecx*4 + T]" (memcpy's tail copy) only reads entries before T
+                        prev = self.ins.get(pc - 2)
+                        neg = (prev is not None and prev.mnemonic == "neg" and prev.operands[0].type == x86.X86_OP_REG
+                               and prev.operands[0].reg == op0.mem.index)
+                        tbl = self.table(op0.mem.disp & 0xFFFFFFFF, 8 if neg else 4)
                         self.tables[pc] = tbl
                         for t in tbl:
                             self.targets.add(t)
@@ -96,10 +100,10 @@ class Func:
                     self.calls.add(op0.imm & 0xFFFFFFFF)
                 pc += i.size
 
-    def table(self, at):
+    def table(self, at, back):
         # MSVC's memcpy indexes some tables with negative values: take valid entries just before too
         before = []
-        for k in range(1, 5):
+        for k in range(1, back + 1):
             t = struct.unpack("<I", self.g.img.read(at - 4 * k, 4))[0]
             if not self.inside(t) or at - 4 * k in self.ins:
                 break
@@ -753,10 +757,12 @@ class Gen:
         elif fn.entry != min(fn.ins):
             out.append(f"    goto L_{fn.entry:x};")
             used.add(f"{fn.entry:x}")
+        # loop heads (targets of backward jumps) let other guest threads take their turn
+        loops = {t for a, line in body if line for t in re.findall(r"goto L_([0-9a-f]+);", line) if int(t, 16) <= a}
         for a, line in body:
             if line is None:
                 if f"{a:x}" in used:
-                    out.append(f"L_{a:x}:;")
+                    out.append(f"L_{a:x}:; POLL;" if f"{a:x}" in loops else f"L_{a:x}:;")
             else:
                 out.append(line)
         if getattr(fn, "dyn", False):

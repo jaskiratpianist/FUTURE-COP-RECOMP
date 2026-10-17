@@ -3,6 +3,7 @@
 #include <ctype.h>
 #include <dirent.h>
 #include <pthread.h>
+#include <sched.h>
 #include <stdarg.h>
 #include <sys/mman.h>
 #include "host.h"
@@ -126,6 +127,40 @@ u32 thunk_new(const char *name, int nargs, ImpFn fn)
     return THUNK_LO + 4 * k;
 }
 
+/* ---- guest threads take turns --------------------------------------------------------------
+   Only one thread runs guest code at a time (a fair ticket lock); host code runs unlocked, so a
+   thread hands over its turn whenever it calls an import, and at loop heads when another
+   thread is waiting (POLL in cpu.h). */
+static unsigned turn_next, turn_now;
+static __thread int turn_held;
+
+static void turn_take(void)
+{
+    unsigned t = __atomic_fetch_add(&turn_next, 1, __ATOMIC_ACQ_REL);
+    while (__atomic_load_n(&turn_now, __ATOMIC_ACQUIRE) != t) {
+        __atomic_store_n(&rt_poll, 1, __ATOMIC_RELEASE);
+        sched_yield();
+    }
+    turn_held = 1;
+}
+
+static void turn_give(void)
+{
+    unsigned now;
+    turn_held = 0;
+    now = __atomic_add_fetch(&turn_now, 1, __ATOMIC_ACQ_REL);
+    /* a waiter that arrives after this sets rt_poll again itself */
+    __atomic_store_n(&rt_poll, __atomic_load_n(&turn_next, __ATOMIC_ACQUIRE) != now, __ATOMIC_RELEASE);
+}
+
+void rt_yield(Cpu *c)
+{
+    (void)c;
+    if (!turn_held) return;
+    turn_give();
+    turn_take();
+}
+
 /* guest code called an address that is not recompiled code */
 void rt_foreign(Cpu *c, u32 addr)
 {
@@ -139,7 +174,13 @@ void rt_foreign(Cpu *c, u32 addr)
         plat_log("unimplemented import %s (called from 0x%08x)", thunks[k].name, rd32(c->r[4]));
         abort();
     }
-    r = thunks[k].fn(c);
+    if (turn_held) {
+        turn_give();
+        r = thunks[k].fn(c);
+        turn_take();
+    } else {
+        r = thunks[k].fn(c);
+    }
     c->r[0] = r;
     c->r[4] += 4 + (thunks[k].nargs > 0 ? 4 * (u32)thunks[k].nargs : 0);
 }
@@ -158,7 +199,8 @@ u32 guest_call(Cpu *c, u32 addr, int nargs, const u32 *args)
 {
     u32 esp = c->r[4];
     Cpu *prev = cur_cpu;
-    int k;
+    int k, took = !turn_held;
+    if (took) turn_take();
     cur_cpu = c;
     for (k = nargs - 1; k >= 0; k--) {
         c->r[4] -= 4;
@@ -169,26 +211,48 @@ u32 guest_call(Cpu *c, u32 addr, int nargs, const u32 *args)
     dispatch(c, addr);
     c->r[4] = esp;  /* works for both stdcall and cdecl callees */
     cur_cpu = prev;
+    if (took) turn_give();
     return c->r[0];
 }
 
 /* ---- COM objects ----------------------------------------------------------------------- */
-static void *com_data[4096];
+/* host data by object number, in pages that never move (other threads read it unlocked) */
+#define COM_PAGE 4096u
+static void **com_pages[1024];
 static u32 com_n;
+static pthread_mutex_t com_lock = PTHREAD_MUTEX_INITIALIZER;
+
+/* one guest vtable per interface (method table), shared by all its objects: the game creates
+   surfaces and sound buffers all the time, and thunks are never freed */
+static u32 com_vtable(const struct ImpDef *methods, int n)
+{
+    static struct { const struct ImpDef *methods; u32 vt; } vts[64];
+    static int vt_n;
+    int k;
+    for (k = 0; k < vt_n; k++)
+        if (vts[k].methods == methods) return vts[k].vt;
+    if (vt_n == 64) { plat_log("out of COM vtables"); abort(); }
+    vts[vt_n].methods = methods;
+    vts[vt_n].vt = galloc(4 * (u32)n);
+    for (k = 0; k < n; k++)
+        wr32(vts[vt_n].vt + 4 * k, thunk_new(methods[k].name, methods[k].nargs, methods[k].fn));
+    return vts[vt_n++].vt;
+}
 
 u32 com_new(const struct ImpDef *methods, int n, void *host_data)
 {
-    u32 vt = galloc(4 * (u32)n), obj = galloc(16);
-    int k;
-    for (k = 0; k < n; k++)
-        wr32(vt + 4 * k, thunk_new(methods[k].name, methods[k].nargs, methods[k].fn));
-    wr32(obj, vt);
-    wr32(obj + 4, com_n);
-    com_data[com_n++] = host_data;
+    u32 obj = galloc(16);
+    pthread_mutex_lock(&com_lock);
+    wr32(obj, com_vtable(methods, n));
+    if (com_n == COM_PAGE * 1024u) { plat_log("out of COM objects"); abort(); }
+    if (!com_pages[com_n / COM_PAGE]) com_pages[com_n / COM_PAGE] = calloc(COM_PAGE, sizeof(void *));
+    com_pages[com_n / COM_PAGE][com_n % COM_PAGE] = host_data;
+    wr32(obj + 4, com_n++);
+    pthread_mutex_unlock(&com_lock);
     return obj;
 }
 
-void *com_host(u32 obj) { return com_data[rd32(obj + 4)]; }
+void *com_host(u32 obj) { u32 k = rd32(obj + 4); return com_pages[k / COM_PAGE][k % COM_PAGE]; }
 
 /* ---- handles ----------------------------------------------------------------------------- */
 #define HANDLE_N 4096

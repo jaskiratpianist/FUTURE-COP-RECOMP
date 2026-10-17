@@ -18,6 +18,10 @@ __attribute__((weak)) void rt_foreign(Cpu *c, u32 addr)
     rt_trap(c, addr, "call to unknown address");
 }
 
+/* guest thread turns: the platform layer implements them (core.c); tests run one thread */
+int rt_poll;
+__attribute__((weak)) void rt_yield(Cpu *c) { (void)c; }
+
 void dispatch(Cpu *c, u32 addr)
 {
     unsigned lo = 0, hi = recomp_table_len;
