@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include "host.h"
 #include "win.h"
+#include "sound.h"
 
 /* ========================================================================= */
 /* COMCTL32: Common Controls                                                 */
@@ -825,11 +826,7 @@ static u32 winmm_time_ms(void)
 /* BOOL PlaySoundA(LPCSTR pszSound, HMODULE hmod, DWORD fdwSound) */
 static u32 imp_PlaySoundA(Cpu *c)
 {
-    u32 p = ARG(0);
-    u32 flags = ARG(2);
-    const char *name = (p && p > 0xffff && !(flags & 4)) ? GSTR(p) : "<id>";
-    plat_log("PlaySoundA: '%s', flags 0x%x", name, flags);
-    return 1;
+    return sound_playsound(ARG(0), ARG(1), ARG(2));
 }
 
 /* DWORD timeGetTime(void) */
