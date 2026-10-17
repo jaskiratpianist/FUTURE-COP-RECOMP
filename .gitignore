@@ -1,0 +1,9 @@
+# the user's own copy of the game: never committed
+game_files/*
+!game_files/.gitkeep
+
+# build output, including the C generated from the retail EXE (derived from copyrighted code)
+build/
+.venv/
+__pycache__/
+*.pyc
