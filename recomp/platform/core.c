@@ -326,6 +326,7 @@ static const struct ImpDef *find_import(const char *dll, const char *name)
     static const struct { const char *dll; const struct ImpDef *t; const int *n; } dlls[] = {
         {"KERNEL32.dll", imp_k32_proc, &imp_k32_proc_n}, {"KERNEL32.dll", imp_k32_mem, &imp_k32_mem_n},
         {"KERNEL32.dll", imp_k32_file, &imp_k32_file_n}, {"KERNEL32.dll", imp_k32_sync, &imp_k32_sync_n},
+        {"USER32.dll", imp_dialog, &imp_dialog_n},  /* first: replaces u32_misc's placeholder dialogs */
         {"USER32.dll", imp_u32_win, &imp_u32_win_n}, {"USER32.dll", imp_u32_misc, &imp_u32_misc_n},
         {"GDI32.dll", imp_gdi32, &imp_gdi32_n}, {"ADVAPI32.dll", imp_advapi32, &imp_advapi32_n},
         {"ole32.dll", imp_ole32, &imp_ole32_n}, {"WINMM.dll", imp_winmm, &imp_winmm_n},

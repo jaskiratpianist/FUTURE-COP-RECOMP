@@ -71,9 +71,9 @@ void plat_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
 /* per-DLL tables (kernel32.c, user32.c, ...) */
 extern const struct ImpDef imp_k32_proc[], imp_k32_mem[], imp_k32_file[], imp_k32_sync[], imp_u32_win[], imp_u32_misc[], imp_gdi32[], imp_advapi32[],
-    imp_ole32[], imp_winmm[], imp_ddraw[], imp_dsound[], imp_dinput[], imp_comctl32[];
+    imp_ole32[], imp_winmm[], imp_ddraw[], imp_dsound[], imp_dinput[], imp_comctl32[], imp_dialog[];
 extern const int imp_k32_proc_n, imp_k32_mem_n, imp_k32_file_n, imp_k32_sync_n, imp_u32_win_n, imp_u32_misc_n, imp_gdi32_n, imp_advapi32_n, imp_ole32_n,
-    imp_winmm_n, imp_ddraw_n, imp_dsound_n, imp_dinput_n, imp_comctl32_n;
+    imp_winmm_n, imp_ddraw_n, imp_dsound_n, imp_dinput_n, imp_comctl32_n, imp_dialog_n;
 
 #define IMPORT_TABLE(dll) const int imp_##dll##_n = sizeof imp_##dll / sizeof imp_##dll[0]
 

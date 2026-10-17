@@ -112,6 +112,8 @@ package installed. Build: `./recomp/build.sh`; run: `build/recomp/fcop <game dir
 
 ## Gemini workers
 
+`recomp/plat_agy.py --task docs/X.md` sends any brief (DIALOG_TASK.md is a good model:
+exact spec, the test command with `--input`/`--png` so Gemini can look at its own screenshots).
 `recomp/plat_agy.py <group>` sends `docs/PLATFORM_TASK.md`, plus the group's assignment
 from GROUPS in that file, to `agy -p`. Each worker owns one file. `plat_test.py` takes
 a lock so workers' builds take turns, and build.sh keeps a file's last good object when
@@ -139,6 +141,22 @@ Workers quit when a blocked tool is denied (a shell `cat`, a URL fetch); just re
 - COM objects share one vtable per interface (core.c `com_vtable`): the game creates surfaces
   and sound buffers constantly and thunks are never freed.
 - `neg ecx; jmp [ecx*4 + T]` (memcpy's tail) reads up to 7 entries *before* T; x86c handles it.
+- Dialogs: Preferences, Controller, Audio, the Esc pause bar, Load/Save and the quit box are
+  the game's own RT_DIALOG resources driven by its dialog procedures. dialog.c (written by
+  Gemini from docs/DIALOG_TASK.md, reviewed) parses the templates, runs them modally over the
+  last game frame and draws them in the game's blue style; u32_win.c hands dialog hwnds to it
+  (dialog.h). `FCOP_DLG_LOG=1` logs every dialog message. The game ignores IDCANCEL in most
+  dialogs, so Esc presses a "Cancel"/"Resume..." button. `build/dialogs.txt` (made by a
+  throwaway decoder, not committed) lists every control.
+- Settings live in our registry (`registry.txt` in the game folder) under
+  HKLM\Software\Electronic Arts\Future Cop\Settings (Resolution = list index, FullScreen,
+  volumes...). The installer used to create the key; gdi_misc.c creates it now. The game saves
+  them **when it exits normally** (plat_test's kill skips that: quit with
+  `click@156,306` + `Return` in the input script). `FCOP_TRACE_REG=1` logs registry calls.
+- Display: menus are always 640x480; the chosen resolution and fullscreen apply in missions.
+  Windowed, DirectDraw's primary surface is the whole desktop (we report DESKTOP_W x DESKTOP_H,
+  1600x1200, win.h) and only the main window's rectangle is shown. Fullscreen comes from
+  SetCooperativeLevel (SDL fullscreen-desktop, letterboxed); Alt+Enter toggles it.
 - Intro movies use DirectShow (`CoCreateInstance` CLSID_FilterGraph); we return
   E_NOINTERFACE and the game waits a few seconds, then skips them.
 
@@ -153,4 +171,7 @@ Workers quit when a blocked tool is denied (a shell `cat`, a URL fetch); just re
 4. Glide: `LoadLibraryA("glide2x.dll")` currently returns 0 (software renderer). Implement
    the gr* functions the EXE names (strings like `_grDrawTriangle@12`) on OpenGL, return
    them from GetProcAddress, and render at any resolution.
-5. The preferences/quit menu and control remapping, as new host-side code.
+5. Dialogs work (pause/resume, quit prompt, preferences). Still to check: Controller
+   Configuration key capture, Audio sliders (once dsound plays), Load/Save. Then native extras
+   (resolution, scaling, fullscreen, arrow/WASD keys) added to the Preferences dialog, and
+   the game's own menu font instead of font8x8.

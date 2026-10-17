@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Hand one platform file to agy (Gemini): recomp/plat_agy.py k32_sync [--model M]"""
+"""Hand one platform file to agy (Gemini): recomp/plat_agy.py k32_sync [--model M]
+or any other brief: recomp/plat_agy.py --task docs/DIALOG_TASK.md"""
 import argparse, os, subprocess, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -153,13 +154,17 @@ GROUPS = {
 }
 
 ap = argparse.ArgumentParser()
-ap.add_argument("group", choices=sorted(GROUPS))
+ap.add_argument("group", nargs="?", choices=sorted(GROUPS))
+ap.add_argument("--task", help="send this brief (a Markdown file) instead of a platform group")
 ap.add_argument("--model", default="gemini-3.8-flash-high")
 a = ap.parse_args()
-path, title, funcs, notes = GROUPS[a.group]
-assign = (f"**File:** `{path}` (the table must be named `imp_{a.group}` and end with "
-          f"`IMPORT_TABLE({a.group});`)\n\n**{title}:** {funcs.replace(' ', ', ')}\n\n**Notes:** {notes}")
-prompt = open(os.path.join(ROOT, "docs", "PLATFORM_TASK.md")).read().replace("{ASSIGNMENT}", assign)
+if a.task:
+    prompt = open(os.path.join(ROOT, a.task)).read()
+else:
+    path, title, funcs, notes = GROUPS[a.group]
+    assign = (f"**File:** `{path}` (the table must be named `imp_{a.group}` and end with "
+              f"`IMPORT_TABLE({a.group});`)\n\n**{title}:** {funcs.replace(' ', ', ')}\n\n**Notes:** {notes}")
+    prompt = open(os.path.join(ROOT, "docs", "PLATFORM_TASK.md")).read().replace("{ASSIGNMENT}", assign)
 r = subprocess.run(["agy", "--model", a.model, "--output-format", "json", "-p", prompt], cwd=ROOT,
                    capture_output=True, text=True, timeout=7200)
 print(r.stdout[-3000:], r.stderr[-1000:])

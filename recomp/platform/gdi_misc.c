@@ -10,6 +10,7 @@
 #include <time.h>
 #include <unistd.h>
 #include "host.h"
+#include "win.h"
 
 /* ========================================================================= */
 /* COMCTL32: Common Controls                                                 */
@@ -192,8 +193,8 @@ static u32 imp_GetDeviceCaps(Cpu *c)
 {
     (void)c;
     switch (ARG(1)) {
-    case 8:   /* HORZRES */    return 640;
-    case 10:  /* VERTRES */    return 480;
+    case 8:   /* HORZRES */    return DESKTOP_W;
+    case 10:  /* VERTRES */    return DESKTOP_H;
     case 12:  /* BITSPIXEL */  return 16;
     case 14:  /* PLANES */     return 1;
     case 2:   /* TECHNOLOGY */ return 1;   /* DT_RASDISPLAY */
@@ -341,7 +342,10 @@ static int reg_key_exists_locked(const char *path)
         !strcasecmp(path, "HKEY_USERS") ||
         !strcasecmp(path, "HKEY_PERFORMANCE_DATA") ||
         !strcasecmp(path, "HKEY_CURRENT_CONFIG") ||
-        !strcasecmp(path, "HKEY_DYN_DATA"))
+        !strcasecmp(path, "HKEY_DYN_DATA") ||
+        /* present on every Windows system: the game opens it before creating its own key */
+        !strcasecmp(path, "HKEY_LOCAL_MACHINE\\Software") ||
+        !strcasecmp(path, "HKEY_CURRENT_USER\\Software"))
         return 1;
 
     size_t plen = strlen(path);
@@ -450,6 +454,8 @@ static void reg_load_locked(void)
 {
     if (reg_loaded) return;
     reg_loaded = 1;
+    /* the game's installer creates its key; the game only opens it */
+    reg_get_or_create_key_locked("HKEY_LOCAL_MACHINE\\Software\\Electronic Arts\\Future Cop");
     char reg_path[1200];
     snprintf(reg_path, sizeof(reg_path), "%s/registry.txt", game_dir);
     FILE *f = fopen(reg_path, "r");
@@ -510,6 +516,7 @@ static void reg_load_locked(void)
 /* LONG RegOpenKeyExA(HKEY hKey, LPCSTR lpSubKey, DWORD ulOptions, REGSAM samDesired, PHKEY phkResult) */
 static u32 imp_RegOpenKeyExA(Cpu *c)
 {
+    if (getenv("FCOP_TRACE_REG")) plat_log("RegOpenKeyExA(key 0x%x, sub '%s') from 0x%08x", ARG(0), ARG(1) ? GSTR(ARG(1)) : "", rd32(c->r[4]));
     u32 hKey = ARG(0);
     u32 sub_ptr = ARG(1);
     u32 out_ptr = ARG(4);
@@ -545,6 +552,7 @@ static u32 imp_RegOpenKeyExA(Cpu *c)
                         LPDWORD lpdwDisposition) */
 static u32 imp_RegCreateKeyExA(Cpu *c)
 {
+    if (getenv("FCOP_TRACE_REG")) plat_log("RegCreateKeyExA(key 0x%x, sub '%s') from 0x%08x", ARG(0), ARG(1) ? GSTR(ARG(1)) : "", rd32(c->r[4]));
     u32 hKey = ARG(0);
     u32 sub_ptr = ARG(1);
     u32 out_ptr = ARG(7);
@@ -613,6 +621,7 @@ static u32 imp_RegFlushKey(Cpu *c)
                          LPDWORD lpType, LPBYTE lpData, LPDWORD lpcbData) */
 static u32 imp_RegQueryValueExA(Cpu *c)
 {
+    if (getenv("FCOP_TRACE_REG")) plat_log("RegQueryValueExA(key 0x%x, value '%s') from 0x%08x", ARG(0), ARG(1) ? GSTR(ARG(1)) : "", rd32(c->r[4]));
     u32 hKey = ARG(0);
     u32 vname_ptr = ARG(1);
     u32 type_ptr = ARG(3);
@@ -667,6 +676,7 @@ static u32 imp_RegQueryValueExA(Cpu *c)
                        DWORD dwType, const BYTE *lpData, DWORD cbData) */
 static u32 imp_RegSetValueExA(Cpu *c)
 {
+    if (getenv("FCOP_TRACE_REG")) plat_log("RegSetValueExA(key 0x%x, value '%s') from 0x%08x", ARG(0), ARG(1) ? GSTR(ARG(1)) : "", rd32(c->r[4]));
     u32 hKey = ARG(0);
     u32 vname_ptr = ARG(1);
     u32 type = ARG(3);

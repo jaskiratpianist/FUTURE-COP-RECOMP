@@ -10,6 +10,7 @@
 #include <SDL.h>
 #include "host.h"
 #include "win.h"
+#include "dialog.h"
 
 /* Win32 Constants */
 #define WM_CREATE            0x0001
@@ -76,6 +77,18 @@
 #define SM_CYFRAME           33
 #define SM_CXEDGE            45
 #define SM_CYEDGE            46
+#define SM_CXFULLSCREEN      16
+#define SM_CYFULLSCREEN      17
+#define SM_CXMAXTRACK        59
+#define SM_CYMAXTRACK        60
+#define SM_CXMAXIMIZED       61
+#define SM_CYMAXIMIZED       62
+
+static int fullscreen_state = 0;
+static int user_resized = 0;
+static int in_programmatic_resize = 0;
+static int alt_enter_active = 0;
+static int cur_pres_w = 0, cur_pres_h = 0;
 
 /* Exported globals from win.h */
 struct Win *main_win = NULL;
@@ -95,6 +108,7 @@ struct WinInternal {
     SDL_Texture *texture;
     int tex_w, tex_h;
     Uint32 tex_format;
+    int logical_set;
 };
 
 #define MAX_WINDOWS 64
@@ -180,6 +194,41 @@ static void ensure_sdl_init(void)
     }
 }
 
+void win_set_fullscreen(int on)
+{
+    int new_state = on ? 1 : 0;
+    if (fullscreen_state != new_state) {
+        fullscreen_state = new_state;
+        if (main_win && main_win->sdl) {
+            in_programmatic_resize = 1;
+            SDL_SetWindowFullscreen(main_win->sdl, fullscreen_state ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+            in_programmatic_resize = 0;
+        }
+        plat_log("fullscreen: %s", fullscreen_state ? "on" : "off");
+    }
+}
+
+/* Window size for a game frame of w x h: at least 3/4 of the usable display height (so it looks
+   the same with any display scaling; FCOP_WINDOW_H=pixels overrides), same aspect ratio, never
+   larger than the usable display. */
+static void window_size_for(int *w, int *h)
+{
+    const char *env = getenv("FCOP_WINDOW_H");
+    SDL_Rect usable = {0};
+    int have_usable = SDL_GetDisplayUsableBounds(0, &usable) == 0 && usable.w > 0 && usable.h > 0;
+    int min_h = env ? atoi(env) : have_usable ? usable.h * 3 / 4 : 720;
+    if (min_h > 0 && *h > 0 && *h < min_h) {
+        *w = *w * min_h / *h;
+        *h = min_h;
+    }
+    if (have_usable && (*w > usable.w || *h > usable.h)) {
+        float sw = (float)usable.w / (float)*w, sh = (float)usable.h / (float)*h;
+        float scale = sw < sh ? sw : sh;
+        *w = (int)(*w * scale);
+        *h = (int)(*h * scale);
+    }
+}
+
 static void ensure_window_sdl(struct WinInternal *w)
 {
     if (!w) return;
@@ -187,14 +236,21 @@ static void ensure_window_sdl(struct WinInternal *w)
     if (!w->win.sdl) {
         int width = w->win.w > 0 ? w->win.w : 640;
         int height = w->win.h > 0 ? w->win.h : 480;
+
+        window_size_for(&width, &height);
+
         w->win.sdl = SDL_CreateWindow(
             "Future Cop: L.A.P.D.",
             SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
             width, height,
-            SDL_WINDOW_HIDDEN
+            SDL_WINDOW_HIDDEN | SDL_WINDOW_RESIZABLE
         );
         if (!w->win.sdl) {
             plat_log("warn: SDL_CreateWindow failed: %s", SDL_GetError());
+        } else if (fullscreen_state) {
+            in_programmatic_resize = 1;
+            SDL_SetWindowFullscreen(w->win.sdl, SDL_WINDOW_FULLSCREEN_DESKTOP);
+            in_programmatic_resize = 0;
         }
     }
 }
@@ -468,8 +524,28 @@ static void check_timers(void)
     }
 }
 
+static int check_alt_enter(const SDL_Event *e)
+{
+    if (e->type == SDL_KEYDOWN) {
+        if ((e->key.keysym.sym == SDLK_RETURN || e->key.keysym.sym == SDLK_KP_ENTER) &&
+            ((e->key.keysym.mod & KMOD_ALT) || (SDL_GetModState() & KMOD_ALT) || vk_down[0x12])) {
+            alt_enter_active = 1;
+            win_set_fullscreen(!fullscreen_state);
+            return 1;
+        }
+    } else if (e->type == SDL_KEYUP) {
+        if ((e->key.keysym.sym == SDLK_RETURN || e->key.keysym.sym == SDLK_KP_ENTER) &&
+            alt_enter_active) {
+            alt_enter_active = 0;
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static void handle_sdl_event(const SDL_Event *e)
 {
+    if (check_alt_enter(e)) return;
     u32 target_hwnd = main_win ? main_win->hwnd : 0;
 
     switch (e->type) {
@@ -587,6 +663,10 @@ static void handle_sdl_event(const SDL_Event *e)
                 msg_post(target_hwnd, WM_SETFOCUS, 0, 0);
             } else if (e->window.event == SDL_WINDOWEVENT_FOCUS_LOST) {
                 msg_post(target_hwnd, WM_KILLFOCUS, 0, 0);
+            } else if (e->window.event == SDL_WINDOWEVENT_RESIZED) {
+                if (!in_programmatic_resize && !fullscreen_state) {
+                    user_resized = 1;
+                }
             }
             break;
     }
@@ -661,10 +741,13 @@ static void scripted_input(void)
         }
         plat_log("FCOP_INPUT: %s %s at %u ms", ev[next].down == 2 ? "move" : ev[next].down ? "press" : "release",
                  ev[next].k ? SDL_GetKeyName(ev[next].k) : "click", now);
-        handle_sdl_event(&e);
+        if (check_alt_enter(&e)) { next++; continue; }
+        if (!(win_event_hook && win_event_hook(&e))) handle_sdl_event(&e);
         next++;
     }
 }
+
+int (*win_event_hook)(const SDL_Event *e);
 
 void plat_pump(void)
 {
@@ -672,6 +755,8 @@ void plat_pump(void)
     SDL_Event e;
     scripted_input();
     while (SDL_PollEvent(&e)) {
+        if (check_alt_enter(&e)) continue;
+        if (win_event_hook && e.type != SDL_QUIT && win_event_hook(&e)) continue;
         handle_sdl_event(&e);
     }
     check_timers();
@@ -703,13 +788,54 @@ static void shot(const void *pixels, int w, int h, int pitch, int bits, u32 gmas
     if (getenv("FCOP_SHOT_LOG")) plat_log("frame %d presented (%dx%d)", n, w, h);
 }
 
+/* the last frame the game presented (16-bit only), for dialogs drawn over it */
+static u16 last_px[DESKTOP_W * DESKTOP_H];
+static int last_w, last_h, last_565;
+
+int win_last_frame(const u16 **px, int *w, int *h, int *is565)
+{
+    if (!last_w) return 0;
+    *px = last_px; *w = last_w; *h = last_h; *is565 = last_565;
+    return 1;
+}
+
 void win_present(const void *pixels, int w, int h, int pitch_bytes, int bits, u32 rmask, u32 gmask, u32 bmask)
+{
+    if (bits == 16 && w <= DESKTOP_W && h <= DESKTOP_H) {
+        for (int y = 0; y < h; y++)
+            memcpy(last_px + y * w, (const u8 *)pixels + y * pitch_bytes, (size_t)w * 2);
+        last_w = w; last_h = h; last_565 = gmask == 0x7e0;
+    }
+    win_show(pixels, w, h, pitch_bytes, bits, rmask, gmask, bmask);
+}
+
+void win_show(const void *pixels, int w, int h, int pitch_bytes, int bits, u32 rmask, u32 gmask, u32 bmask)
 {
     shot(pixels, w, h, pitch_bytes, bits, gmask);
     if (!main_win) return;
     struct WinInternal *win_int = (struct WinInternal *)main_win;
     ensure_window_sdl(win_int);
     if (!win_int->win.sdl) return;
+
+    if (w != cur_pres_w || h != cur_pres_h) {
+        plat_log("presented size: %dx%d", w, h);
+        cur_pres_w = w;
+        cur_pres_h = h;
+    }
+
+    if (!fullscreen_state && !user_resized) {
+        int target_w = w;
+        int target_h = h;
+        window_size_for(&target_w, &target_h);
+        int cur_w = 0, cur_h = 0;
+        SDL_GetWindowSize(win_int->win.sdl, &cur_w, &cur_h);
+        if (cur_w != target_w || cur_h != target_h) {
+            in_programmatic_resize = 1;
+            SDL_SetWindowSize(win_int->win.sdl, target_w, target_h);
+            SDL_SetWindowPosition(win_int->win.sdl, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+            in_programmatic_resize = 0;
+        }
+    }
 
     if (!win_int->win.visible) {
         SDL_ShowWindow(win_int->win.sdl);
@@ -740,7 +866,8 @@ void win_present(const void *pixels, int w, int h, int pitch_bytes, int bits, u3
     }
     if (!win_int->renderer) return;
 
-    if (!win_int->texture || win_int->tex_w != w || win_int->tex_h != h || win_int->tex_format != format) {
+    int size_changed = (win_int->tex_w != w || win_int->tex_h != h);
+    if (!win_int->texture || size_changed || win_int->tex_format != format) {
         if (win_int->texture) SDL_DestroyTexture(win_int->texture);
         win_int->texture = SDL_CreateTexture(win_int->renderer, format, SDL_TEXTUREACCESS_STREAMING, w, h);
         win_int->tex_w = w;
@@ -749,6 +876,10 @@ void win_present(const void *pixels, int w, int h, int pitch_bytes, int bits, u3
     }
     if (!win_int->texture) return;
 
+    if (size_changed || !win_int->logical_set) {
+        SDL_RenderSetLogicalSize(win_int->renderer, w, h);  /* mouse events arrive in game pixels */
+        win_int->logical_set = 1;
+    }
     SDL_UpdateTexture(win_int->texture, NULL, pixels, pitch_bytes);
     SDL_RenderClear(win_int->renderer);
     SDL_RenderCopy(win_int->renderer, win_int->texture, NULL, NULL);
@@ -896,6 +1027,7 @@ static u32 imp_CreateWindowExA(Cpu *c)
 /* BOOL DestroyWindow(HWND hWnd) */
 static u32 imp_DestroyWindow(Cpu *c)
 {
+    if (dlg_owns(ARG(0))) { dlg_destroy(c, ARG(0)); return 1; }
     u32 hwnd = ARG(0);
     struct WinInternal *w = win_get_internal(hwnd);
     if (!w) return 0;
@@ -1000,6 +1132,7 @@ static u32 imp_DefWindowProcA(Cpu *c)
 /* BOOL ShowWindow(HWND hWnd, int nCmdShow) */
 static u32 imp_ShowWindow(Cpu *c)
 {
+    if (dlg_owns(ARG(0))) return (u32)dlg_show(ARG(0), (int)ARG(1));
     u32 hwnd = ARG(0);
     int cmd = (int)ARG(1);
     struct WinInternal *w = win_get_internal(hwnd);
@@ -1034,6 +1167,7 @@ static u32 imp_UpdateWindow(Cpu *c)
 /* BOOL SetWindowPos(HWND hWnd, HWND hWndInsertAfter, int X, int Y, int cx, int cy, UINT uFlags) */
 static u32 imp_SetWindowPos(Cpu *c)
 {
+    if (dlg_owns(ARG(0))) { dlg_set_pos(ARG(0), (int)ARG(2), (int)ARG(3), (int)ARG(4), (int)ARG(5), ARG(6)); return 1; }
     u32 hwnd = ARG(0);
     int x = (int)ARG(2);
     int y = (int)ARG(3);
@@ -1047,12 +1181,10 @@ static u32 imp_SetWindowPos(Cpu *c)
     if (!(flags & SWP_NOMOVE)) {
         w->win.x = x;
         w->win.y = y;
-        if (w->win.sdl) SDL_SetWindowPosition(w->win.sdl, x, y);
     }
     if (!(flags & SWP_NOSIZE)) {
         w->win.w = cx;
         w->win.h = cy;
-        if (w->win.sdl) SDL_SetWindowSize(w->win.sdl, cx, cy);
     }
     if (flags & SWP_SHOWWINDOW) {
         ensure_window_sdl(w);
@@ -1069,6 +1201,12 @@ static u32 imp_SetWindowPos(Cpu *c)
 /* BOOL GetWindowRect(HWND hWnd, LPRECT lpRect) */
 static u32 imp_GetWindowRect(Cpu *c)
 {
+    if (dlg_owns(ARG(0))) {
+        int r[4];
+        dlg_get_rect(ARG(0), r);
+        for (int k = 0; k < 4; k++) wr32(ARG(1) + 4 * k, (u32)r[k]);
+        return 1;
+    }
     u32 hwnd = ARG(0);
     u32 rect = ARG(1);
     struct Win *w = win_get(hwnd);
@@ -1200,6 +1338,7 @@ static u32 imp_SetWindowLongA(Cpu *c)
 /* BOOL SetWindowTextA(HWND hWnd, LPCSTR lpString) */
 static u32 imp_SetWindowTextA(Cpu *c)
 {
+    if (dlg_owns(ARG(0))) { dlg_set_text(ARG(0), ARG(1) ? GSTR(ARG(1)) : ""); return 1; }
     u32 hwnd = ARG(0);
     u32 str_ptr = ARG(1);
     struct WinInternal *w = win_get_internal(hwnd);
@@ -1261,6 +1400,7 @@ static u32 imp_SetFocus(Cpu *c)
 /* BOOL EnableWindow(HWND hWnd, BOOL bEnable) */
 static u32 imp_EnableWindow(Cpu *c)
 {
+    if (dlg_owns(ARG(0))) return (u32)dlg_enable(ARG(0), ARG(1) != 0);
     return 0; /* was previously enabled */
 }
 
@@ -1369,6 +1509,7 @@ static u32 imp_DispatchMessageA(Cpu *c)
 /* BOOL PostMessageA(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) */
 static u32 imp_PostMessageA(Cpu *c)
 {
+    if (dlg_owns(ARG(0))) { dlg_send(c, ARG(0), ARG(1), ARG(2), ARG(3)); return 1; }
     msg_post(ARG(0), ARG(1), ARG(2), ARG(3));
     return 1;
 }
@@ -1376,6 +1517,7 @@ static u32 imp_PostMessageA(Cpu *c)
 /* LRESULT SendMessageA(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam) */
 static u32 imp_SendMessageA(Cpu *c)
 {
+    if (dlg_owns(ARG(0))) return dlg_send(c, ARG(0), ARG(1), ARG(2), ARG(3));
     return send_message_direct(ARG(0), ARG(1), ARG(2), ARG(3));
 }
 
@@ -1505,8 +1647,8 @@ static u32 imp_LoadCursorA(Cpu *c)
 static u32 imp_SystemParametersInfoA(Cpu *c)
 {
     u32 action = ARG(0), pv = ARG(2);
-    if (action == 0x30 && pv) {  /* SPI_GETWORKAREA: the whole 640x480 "desktop" */
-        wr32(pv, 0); wr32(pv + 4, 0); wr32(pv + 8, 640); wr32(pv + 12, 480);
+    if (action == 0x30 && pv) {  /* SPI_GETWORKAREA */
+        wr32(pv, 0); wr32(pv + 4, 0); wr32(pv + 8, DESKTOP_W); wr32(pv + 12, DESKTOP_H);
     } else if (pv && action != 0x61 /* SPI_SCREENSAVERRUNNING */) {
         plat_log("warn: SystemParametersInfoA action 0x%x", action);
     }
@@ -1518,8 +1660,16 @@ static u32 imp_GetSystemMetrics(Cpu *c)
 {
     int idx = (int)ARG(0);
     switch (idx) {
-        case SM_CXSCREEN:   return 640;
-        case SM_CYSCREEN:   return 480;
+        case SM_CXSCREEN:
+        case SM_CXFULLSCREEN:
+        case SM_CXMAXIMIZED:
+        case SM_CXMAXTRACK:
+            return DESKTOP_W;
+        case SM_CYSCREEN:
+        case SM_CYFULLSCREEN:
+        case SM_CYMAXIMIZED:
+        case SM_CYMAXTRACK:
+            return DESKTOP_H;
         case SM_CXVSCROLL:  return 16;
         case SM_CYHSCROLL:  return 16;
         case SM_CYCAPTION:  return 19;

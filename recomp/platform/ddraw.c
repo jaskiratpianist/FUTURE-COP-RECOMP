@@ -132,6 +132,7 @@ typedef struct HostDDraw {
     u32 primary_surf; /* guest obj */
     u32 ddraw1_obj;   /* guest obj */
     u32 ddraw2_obj;   /* guest obj */
+    int mode_set;
 } HostDDraw;
 
 /* Forward declarations of method tables */
@@ -184,28 +185,50 @@ static const u8 guid_d4_d3d[8]     = {0xA3, 0x1A, 0x00, 0xAA, 0x00, 0xB9, 0x33, 
 
 /* ---- Surface Presentation ------------------------------------------------------------ */
 
-static u16 conv_buffer[1024 * 768];
+static u16 conv_buffer[DESKTOP_W * DESKTOP_H];
 
 static void present_surface(HostSurface *surf)
 {
     if (!surf || !surf->pixels) return;
-    int w = (int)surf->width;
-    int h = (int)surf->height;
-    if (w <= 0 || h <= 0) return;
+
+    int rx = 0, ry = 0;
+    int rw = (int)surf->width;
+    int rh = (int)surf->height;
+
+    if (surf->is_primary && !(surf->ddraw && surf->ddraw->mode_set)) {
+        if (main_win) {
+            rx = main_win->x;
+            ry = main_win->y;
+            rw = main_win->w > 0 ? main_win->w : 640;
+            rh = main_win->h > 0 ? main_win->h : 480;
+        } else {
+            rx = 0;
+            ry = 0;
+            rw = 640;
+            rh = 480;
+        }
+        if (rx < 0) { rw += rx; rx = 0; }
+        if (ry < 0) { rh += ry; ry = 0; }
+        if (rx + rw > (int)surf->width) rw = (int)surf->width - rx;
+        if (ry + rh > (int)surf->height) rh = (int)surf->height - ry;
+    }
+
+    if (rw <= 0 || rh <= 0) return;
 
     if (surf->bpp == 16) {
         u32 rmask = surf->rmask ? surf->rmask : 0xF800u;
         u32 gmask = surf->gmask ? surf->gmask : 0x07E0u;
         u32 bmask = surf->bmask ? surf->bmask : 0x001Fu;
-        win_present(G(surf->pixels), w, h, (int)surf->pitch, 16, rmask, gmask, bmask);
+        const u8 *pixels = (const u8 *)G(surf->pixels) + ry * surf->pitch + rx * 2;
+        win_present(pixels, rw, rh, (int)surf->pitch, 16, rmask, gmask, bmask);
     } else if (surf->bpp == 8) {
-        if (w * h <= 1024 * 768) {
+        if (rw * rh <= DESKTOP_W * DESKTOP_H) {
             HostPalette *pal = surf->palette_obj ? (HostPalette *)com_host(surf->palette_obj) : NULL;
             const u8 *src = (const u8 *)G(surf->pixels);
-            for (int y = 0; y < h; y++) {
-                const u8 *srow = src + y * surf->pitch;
-                u16 *drow = conv_buffer + y * w;
-                for (int x = 0; x < w; x++) {
+            for (int y = 0; y < rh; y++) {
+                const u8 *srow = src + (ry + y) * surf->pitch + rx;
+                u16 *drow = conv_buffer + y * rw;
+                for (int x = 0; x < rw; x++) {
                     u8 idx = srow[x];
                     u8 r = pal ? pal->entries[idx].r : idx;
                     u8 g = pal ? pal->entries[idx].g : idx;
@@ -213,7 +236,7 @@ static void present_surface(HostSurface *surf)
                     drow[x] = (u16)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
                 }
             }
-            win_present(conv_buffer, w, h, w * 2, 16, 0xF800u, 0x07E0u, 0x001Fu);
+            win_present(conv_buffer, rw, rh, rw * 2, 16, 0xF800u, 0x07E0u, 0x001Fu);
         }
     }
 }
@@ -1439,13 +1462,27 @@ static u32 imp_dd_DuplicateSurface(Cpu *c)
 struct ModeDef { u32 w, h, bpp; };
 static const struct ModeDef display_modes[] = {
     {320, 240, 16},
+    {400, 300, 16},
+    {480, 360, 16},
+    {512, 384, 16},
     {640, 480, 16},
     {800, 600, 16},
+    {960, 720, 16},
     {1024, 768, 16},
+    {1120, 840, 16},
+    {1280, 960, 16},
+    {1600, 1200, 16},
     {320, 240, 8},
+    {400, 300, 8},
+    {480, 360, 8},
+    {512, 384, 8},
     {640, 480, 8},
     {800, 600, 8},
+    {960, 720, 8},
     {1024, 768, 8},
+    {1120, 840, 8},
+    {1280, 960, 8},
+    {1600, 1200, 8},
 };
 
 static u32 imp_dd_EnumDisplayModes(Cpu *c)
@@ -1633,6 +1670,14 @@ static u32 imp_dd_Initialize(Cpu *c)
 /* 19 */
 static u32 imp_dd_RestoreDisplayMode(Cpu *c)
 {
+    HostDDraw *dd = (HostDDraw *)com_host(ARG(0));
+    if (dd && dd->mode_set) {
+        dd->width = DESKTOP_W;
+        dd->height = DESKTOP_H;
+        dd->bpp = 16;
+        dd->mode_set = 0;
+        plat_log("display mode: %ux%u %u bpp", dd->width, dd->height, dd->bpp);
+    }
     return DD_OK;
 }
 
@@ -1645,6 +1690,18 @@ static u32 imp_dd_SetCooperativeLevel(Cpu *c)
     if (dd) {
         dd->hwnd = hWnd;
         dd->coop_flags = dwFlags;
+    }
+    if (dwFlags & 1 /* DDSCL_FULLSCREEN */) {
+        win_set_fullscreen(1);
+    } else if (dwFlags & 8 /* DDSCL_NORMAL */) {
+        win_set_fullscreen(0);
+        if (dd && dd->mode_set) {
+            dd->width = DESKTOP_W;
+            dd->height = DESKTOP_H;
+            dd->bpp = 16;
+            dd->mode_set = 0;
+            plat_log("display mode: %ux%u %u bpp", dd->width, dd->height, dd->bpp);
+        }
     }
     return DD_OK;
 }
@@ -1661,6 +1718,8 @@ static u32 imp_dd_SetDisplayMode(Cpu *c)
         if (width) dd->width = width;
         if (height) dd->height = height;
         if (bpp) dd->bpp = bpp;
+        dd->mode_set = 1;
+        plat_log("display mode: %ux%u %u bpp", dd->width, dd->height, dd->bpp);
     }
     return DD_OK;
 }
@@ -1714,6 +1773,8 @@ static u32 imp_dd2_SetDisplayMode(Cpu *c)
         if (width) dd->width = width;
         if (height) dd->height = height;
         if (bpp) dd->bpp = bpp;
+        dd->mode_set = 1;
+        plat_log("display mode: %ux%u %u bpp", dd->width, dd->height, dd->bpp);
     }
     return DD_OK;
 }
@@ -1795,9 +1856,10 @@ static u32 imp_DirectDrawCreate(Cpu *c)
 
     HostDDraw *dd = (HostDDraw *)calloc(1, sizeof(HostDDraw));
     dd->refcount = 1;
-    dd->width = 640;
-    dd->height = 480;
+    dd->width = DESKTOP_W;
+    dd->height = DESKTOP_H;
     dd->bpp = 16;
+    dd->mode_set = 0;
 
     u32 obj = com_new(methods_ddraw, 23, dd);
     dd->ddraw1_obj = obj;
