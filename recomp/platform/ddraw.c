@@ -136,6 +136,13 @@ typedef struct HostDDraw {
 } HostDDraw;
 
 /* Forward declarations of method tables */
+/* 16-bit pixel format the game is given: 555 by default (its "Texture Coloring" lighting
+   comes out red/yellow with green specks in 565: a bug somewhere in the recompiled 565
+   render path, not yet found), 565 with FCOP_PIXFMT=565 */
+static int dd_is555(void) { static int v = -1; if (v < 0) { const char *e = getenv("FCOP_PIXFMT"); v = !(e && !strcmp(e, "565")); } return v; }
+static u32 dd_rmask(void) { return dd_is555() ? 0x7C00u : 0xF800u; }
+static u32 dd_gmask(void) { return dd_is555() ? 0x03E0u : 0x07E0u; }
+
 static const struct ImpDef methods_palette[];
 static const struct ImpDef methods_clipper[];
 static const struct ImpDef methods_surface[];
@@ -216,8 +223,8 @@ static void present_surface(HostSurface *surf)
     if (rw <= 0 || rh <= 0) return;
 
     if (surf->bpp == 16) {
-        u32 rmask = surf->rmask ? surf->rmask : 0xF800u;
-        u32 gmask = surf->gmask ? surf->gmask : 0x07E0u;
+        u32 rmask = surf->rmask ? surf->rmask : dd_rmask();
+        u32 gmask = surf->gmask ? surf->gmask : dd_gmask();
         u32 bmask = surf->bmask ? surf->bmask : 0x001Fu;
         const u8 *pixels = (const u8 *)G(surf->pixels) + ry * surf->pitch + rx * 2;
         win_present(pixels, rw, rh, (int)surf->pitch, 16, rmask, gmask, bmask);
@@ -271,8 +278,8 @@ static void fill_surface_desc(HostSurface *surf, u32 desc_p)
         wr32(desc_p + 0x48 + 0x04, DDPF_RGB);
         wr32(desc_p + 0x48 + 0x08, 0);
         wr32(desc_p + 0x48 + 0x0C, 16);
-        wr32(desc_p + 0x48 + 0x10, surf->rmask ? surf->rmask : 0xF800u);
-        wr32(desc_p + 0x48 + 0x14, surf->gmask ? surf->gmask : 0x07E0u);
+        wr32(desc_p + 0x48 + 0x10, surf->rmask ? surf->rmask : dd_rmask());
+        wr32(desc_p + 0x48 + 0x14, surf->gmask ? surf->gmask : dd_gmask());
         wr32(desc_p + 0x48 + 0x18, surf->bmask ? surf->bmask : 0x001Fu);
         wr32(desc_p + 0x48 + 0x1C, 0);
     } else {
@@ -948,8 +955,8 @@ static u32 imp_dds_GetPixelFormat(Cpu *c)
         wr32(lpFormat + 0x04, DDPF_RGB);
         wr32(lpFormat + 0x08, 0);
         wr32(lpFormat + 0x0C, 16);
-        wr32(lpFormat + 0x10, surf->rmask ? surf->rmask : 0xF800u);
-        wr32(lpFormat + 0x14, surf->gmask ? surf->gmask : 0x07E0u);
+        wr32(lpFormat + 0x10, surf->rmask ? surf->rmask : dd_rmask());
+        wr32(lpFormat + 0x14, surf->gmask ? surf->gmask : dd_gmask());
         wr32(lpFormat + 0x18, surf->bmask ? surf->bmask : 0x001Fu);
         wr32(lpFormat + 0x1C, 0);
     } else {
@@ -1385,7 +1392,7 @@ static u32 imp_dd_CreateSurface(Cpu *c)
     u32 height = (dwFlags & DDSD_HEIGHT) ? rd32(lpDDSD + 0x08) : dd->height;
 
     u32 bpp = dd->bpp;
-    u32 rmask = 0xF800u, gmask = 0x07E0u, bmask = 0x001Fu;
+    u32 rmask = dd_rmask(), gmask = dd_gmask(), bmask = 0x001Fu;
 
     if (dwFlags & DDSD_PIXELFORMAT) {
         bpp = rd32(lpDDSD + 0x48 + 0x0C);
@@ -1520,8 +1527,8 @@ static u32 imp_dd_EnumDisplayModes(Cpu *c)
         if (m->bpp == 16) {
             wr32(enum_desc + 0x48 + 0x04, DDPF_RGB);
             wr32(enum_desc + 0x48 + 0x0C, 16);
-            wr32(enum_desc + 0x48 + 0x10, 0xF800u);
-            wr32(enum_desc + 0x48 + 0x14, 0x07E0u);
+            wr32(enum_desc + 0x48 + 0x10, dd_rmask());
+            wr32(enum_desc + 0x48 + 0x14, dd_gmask());
             wr32(enum_desc + 0x48 + 0x18, 0x001Fu);
         } else {
             wr32(enum_desc + 0x48 + 0x04, DDPF_RGB | DDPF_PALETTEINDEXED8);
@@ -1606,8 +1613,8 @@ static u32 imp_dd_GetDisplayMode(Cpu *c)
     if (dd->bpp == 16) {
         wr32(lpDDSD + 0x48 + 0x04, DDPF_RGB);
         wr32(lpDDSD + 0x48 + 0x0C, 16);
-        wr32(lpDDSD + 0x48 + 0x10, 0xF800u);
-        wr32(lpDDSD + 0x48 + 0x14, 0x07E0u);
+        wr32(lpDDSD + 0x48 + 0x10, dd_rmask());
+        wr32(lpDDSD + 0x48 + 0x14, dd_gmask());
         wr32(lpDDSD + 0x48 + 0x18, 0x001Fu);
     } else {
         wr32(lpDDSD + 0x48 + 0x04, DDPF_RGB | DDPF_PALETTEINDEXED8);

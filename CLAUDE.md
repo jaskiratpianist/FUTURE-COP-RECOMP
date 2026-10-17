@@ -168,6 +168,11 @@ own test run (`plat_test.py` is headless; `--png`, `--audio`, `--input`).
   Windowed, DirectDraw's primary surface is the whole desktop (we report DESKTOP_W x DESKTOP_H,
   1600x1200, win.h) and only the main window's rectangle is shown. Fullscreen comes from
   SetCooperativeLevel (SDL fullscreen-desktop, letterboxed); Alt+Enter toggles it.
+- Pixel format: ddraw.c gives the game **555** by default. In 565 the software renderer's
+  "Texture Coloring" (coloured lighting) comes out wrong (yellow/red floors with green
+  specks; compare `FCOP_PIXFMT=565` with ColoringIsOff 0 and 1). Root cause not found yet:
+  most 1998 cards were 565 and it worked there, so suspect the recompiled 565 code path
+  (FUN_0045b1c0's 555/565 patch table at 0x48ea20, or other self-modifying code).
 - Intro movies use DirectShow (`CoCreateInstance` CLSID_FilterGraph); we return
   E_NOINTERFACE and the game waits a few seconds, then skips them.
 
