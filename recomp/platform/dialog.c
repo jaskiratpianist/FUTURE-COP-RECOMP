@@ -2155,6 +2155,19 @@ static u32 imp_DialogBoxParamA(Cpu *c)
         }
         guest_call(c, dlg->proc, 4, (u32[]){ dlg->hwnd, 0x0110 /* WM_INITDIALOG */, first_ctrl_hwnd, param });
     }
+    /* Preferences (dialog 101): "Processor Select" only picks 1998 CPU-specific renderer loops,
+       meaningless for recompiled code: hide it and keep it on AutoDetect (item 0) */
+    if (dlg->res_id == 101) {
+        struct Control *label = find_ctrl_by_id(dlg, 1111), *combo = find_ctrl_by_id(dlg, 1023);
+        struct Control *ctl = find_ctrl_by_id(dlg, 1099), *audio = find_ctrl_by_id(dlg, 1100);
+        if (label && combo && ctl && audio) {
+            int up = ctl->screen_y - label->screen_y;  /* move the two buttons into the gap */
+            label->visible = combo->visible = 0;
+            combo->cur_sel = 0;
+            ctl->screen_y -= up;
+            audio->screen_y -= up;
+        }
+    }
     /* the pause bar's first button is Abort: start on Resume so Enter cannot end the mission */
     for (int i = 0; i < dlg->num_controls; i++)
         if (is_focusable(&dlg->controls[i]) && !strncasecmp(dlg->controls[i].text, "Resume", 6)) {
