@@ -426,6 +426,7 @@ static void draw_pill_button(u16 *buf, int scr_w, int scr_h, int x, int y, int w
         int adv = 6;
         if (len * 8 <= avail_w) adv = 8;
         else if (len * 7 <= avail_w) adv = 7;
+        else snprintf(upper, sizeof upper, "%s", text);  /* capitals collide at 6 px: keep lower case */
 
         int tw = len * adv;
         int tx = x + (w - tw) / 2;
@@ -563,9 +564,10 @@ static void draw_combobox_dropdown(u16 *buf, int scr_w, int scr_h, struct Contro
     int lw = c->w;
     int lh = c->open_h > ch ? c->open_h - ch : 80;
     if (lh < 48) lh = 48;
+    if (c->item_count > 0 && lh > 4 + c->item_count * 16) lh = 4 + c->item_count * 16;
     if (ly + lh > scr_h - 4) lh = scr_h - 4 - ly;
 
-    fill_rect(buf, scr_w, scr_h, lx, ly, lw, lh, 10, 18, 54, 245, is565);
+    fill_rect(buf, scr_w, scr_h, lx, ly, lw, lh, 10, 18, 54, 255, is565);
     for (int px = lx; px < lx + lw; px++) {
         blend_pixel(buf, scr_w, scr_h, px, ly, 46, 123, 255, 255, is565);
         blend_pixel(buf, scr_w, scr_h, px, ly + lh - 1, 46, 123, 255, 255, is565);
@@ -2144,6 +2146,12 @@ static u32 imp_DialogBoxParamA(Cpu *c)
         }
         guest_call(c, dlg->proc, 4, (u32[]){ dlg->hwnd, 0x0110 /* WM_INITDIALOG */, first_ctrl_hwnd, param });
     }
+    /* the pause bar's first button is Abort: start on Resume so Enter cannot end the mission */
+    for (int i = 0; i < dlg->num_controls; i++)
+        if (is_focusable(&dlg->controls[i]) && !strncasecmp(dlg->controls[i].text, "Resume", 6)) {
+            dlg->focused_ctrl = i;
+            break;
+        }
 
     int (*prev_hook)(const SDL_Event *) = win_event_hook;
     win_event_hook = dlg_event_hook;

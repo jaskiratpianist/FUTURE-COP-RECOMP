@@ -18,6 +18,9 @@ ap.add_argument("--api", action="store_true", help="log every import call (FCOP_
 ap.add_argument("--lines", type=int, default=40)
 ap.add_argument("--input", help="scripted input (FCOP_INPUT), e.g. \"9000:click@156,306 12000:Escape\"")
 ap.add_argument("--png", help="save the last frame shown as this PNG (needs ffmpeg)")
+ap.add_argument("--show", action="store_true", help="show the window (default: headless, nothing appears on screen)")
+ap.add_argument("--audio", help="record the game's sound output to this raw file (SDL disk audio driver) "
+                "and print its level per second")
 a = ap.parse_args()
 lock = open(os.path.join(ROOT, "build", "plat_test.lock"), "w")
 fcntl.flock(lock, fcntl.LOCK_EX)  # several workers share one build directory: take turns
@@ -33,6 +36,13 @@ if b.returncode:
 env = dict(os.environ, FCOP_TRACE_API="1") if a.api else dict(os.environ)
 if a.input:
     env["FCOP_INPUT"] = a.input
+if not a.show:
+    env["SDL_VIDEODRIVER"] = "offscreen"  # no window on the desktop; frames still go to --png
+if a.audio:
+    env["SDL_AUDIODRIVER"] = "disk"
+    env["SDL_DISKAUDIOFILE"] = a.audio
+elif not a.show:
+    env["SDL_AUDIODRIVER"] = "dummy"
 shots = os.path.join(ROOT, "build", "plat_test_shots")
 if a.png:
     os.makedirs(shots, exist_ok=True)
@@ -60,3 +70,13 @@ if a.png:
         print(f"last frame ({f}) saved as {a.png}" if ok else "could not write " + a.png)
     else:
         print("no frame was shown")
+if a.audio and os.path.exists(a.audio):
+    # dsound.c logs "audio device: <rate> Hz <channels> ch" when it opens SDL audio (16-bit samples)
+    import array, re
+    m = re.search(r"audio device: (\d+) Hz (\d+) ch", out)
+    rate, ch = (int(m.group(1)), int(m.group(2))) if m else (22050, 2)
+    data = array.array("h", open(a.audio, "rb").read()[: (os.path.getsize(a.audio) // 2) * 2])
+    step = rate * ch
+    levels = [max((abs(x) for x in data[k:k + step]), default=0) for k in range(0, len(data), step)]
+    print(f"audio: {len(data) / step:.1f} s at {rate} Hz {ch} ch"
+          f"{'' if m else ' (assumed: no audio device line in the log)'}; peak per second (0-32767): {levels}")
