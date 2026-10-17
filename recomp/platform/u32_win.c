@@ -929,9 +929,12 @@ static void scripted_input(void)
 
 int (*win_event_hook)(const SDL_Event *e);
 
+static void overlay_pump(void);
+
 void plat_pump(void)
 {
     if (!sdl_inited) return;
+    overlay_pump();
     SDL_Event e;
     scripted_input();
     while (SDL_PollEvent(&e)) {
@@ -982,6 +985,43 @@ int win_last_frame(const u16 **px, int *w, int *h, int *is565)
     return 1;
 }
 
+/* A video frame from another thread: SDL's renderer only works on the main thread, so it is
+   kept here and shown by plat_pump; while one is active the game's own frames are not shown
+   (on Windows the video window covers the game). */
+static pthread_mutex_t overlay_lock = PTHREAD_MUTEX_INITIALIZER;
+static u16 overlay_px[640 * 480];
+static int overlay_active, overlay_dirty;
+static u32 overlay_masks[3];
+
+void win_overlay_set(const u16 *px, u32 rmask, u32 gmask, u32 bmask)
+{
+    pthread_mutex_lock(&overlay_lock);
+    memcpy(overlay_px, px, sizeof overlay_px);
+    overlay_masks[0] = rmask; overlay_masks[1] = gmask; overlay_masks[2] = bmask;
+    overlay_active = overlay_dirty = 1;
+    pthread_mutex_unlock(&overlay_lock);
+}
+
+void win_overlay_clear(void)
+{
+    pthread_mutex_lock(&overlay_lock);
+    overlay_active = overlay_dirty = 0;
+    pthread_mutex_unlock(&overlay_lock);
+}
+
+static void overlay_pump(void)
+{
+    static u16 copy[640 * 480];
+    u32 m[3];
+    pthread_mutex_lock(&overlay_lock);
+    if (!overlay_dirty) { pthread_mutex_unlock(&overlay_lock); return; }
+    memcpy(copy, overlay_px, sizeof copy);
+    memcpy(m, overlay_masks, sizeof m);
+    overlay_dirty = 0;
+    pthread_mutex_unlock(&overlay_lock);
+    win_show(copy, 640, 480, 640 * 2, 16, m[0], m[1], m[2]);
+}
+
 void win_present(const void *pixels, int w, int h, int pitch_bytes, int bits, u32 rmask, u32 gmask, u32 bmask)
 {
     if (bits == 16 && w <= DESKTOP_W && h <= DESKTOP_H) {
@@ -989,6 +1029,7 @@ void win_present(const void *pixels, int w, int h, int pitch_bytes, int bits, u3
             memcpy(last_px + y * w, (const u8 *)pixels + y * pitch_bytes, (size_t)w * 2);
         last_w = w; last_h = h; last_565 = gmask == 0x7e0;
     }
+    if (overlay_active) return;  /* a video covers the game */
     win_show(pixels, w, h, pitch_bytes, bits, rmask, gmask, bmask);
 }
 

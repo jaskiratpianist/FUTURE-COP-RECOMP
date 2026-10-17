@@ -180,7 +180,7 @@ static void present_video_frame(FilterGraph *fg, plm_frame_t *frame)
         }
     }
 
-    win_show(g_out_frame, 640, 480, 640 * sizeof(u16), 16, rmask, gmask, bmask);
+    win_overlay_set(g_out_frame, rmask, gmask, bmask);  /* shown on the main thread */
 }
 
 static void *video_worker(void *arg)
@@ -202,7 +202,9 @@ static void *video_worker(void *arg)
         fg->ended = 1;
         fg->state = 0;
         if (fg->has_audio) sound_stream_close();
-        if (fg->guest_event_handle) sync_event_set(fg->guest_event_handle, 1);
+        win_overlay_clear();
+        win_overlay_clear();
+    if (fg->guest_event_handle) sync_event_set(fg->guest_event_handle, 1);
         if (fg->notify_hwnd && fg->notify_msg) {
             msg_post(fg->notify_hwnd, fg->notify_msg, 0, fg->notify_inst_data);
         }
@@ -277,6 +279,7 @@ static void *video_worker(void *arg)
         sound_stream_close();
     }
 
+    win_overlay_clear();
     if (fg->guest_event_handle) sync_event_set(fg->guest_event_handle, 1);
     if (fg->notify_hwnd && fg->notify_msg) {
         msg_post(fg->notify_hwnd, fg->notify_msg, 0, fg->notify_inst_data);
@@ -529,6 +532,7 @@ static u32 imp_mc_Stop(Cpu *c)
     FilterGraph *fg = (FilterGraph *)com_host(this_obj);
     plat_log("IMediaControl::Stop()");
     if (!fg) return 0x80004005u;
+    win_overlay_clear();
     fg->state = 0;
     if (win_event_hook == video_event_hook) {
         win_event_hook = NULL;

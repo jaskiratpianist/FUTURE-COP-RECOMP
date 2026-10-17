@@ -44,6 +44,10 @@ void win_present(const void *pixels, int w, int h, int pitch_bytes, int bits, u3
 void win_set_fullscreen(int on);
 /* show a frame without keeping it as the game's last frame (dialogs drawn over the game) */
 void win_show(const void *pixels, int w, int h, int pitch_bytes, int bits, u32 rmask, u32 gmask, u32 bmask);
+/* a 640x480 16-bit video frame from any thread, shown on the main thread by plat_pump; the
+   game's own frames are held back until win_overlay_clear */
+void win_overlay_set(const u16 *px, u32 rmask, u32 gmask, u32 bmask);
+void win_overlay_clear(void);
 /* the game's last presented 16-bit frame (w*h pixels, no padding); 0 if none yet */
 int win_last_frame(const u16 **px, int *w, int *h, int *is565);
 /* if set, plat_pump offers every SDL event (except SDL_QUIT) to it first; returning 1 consumes
