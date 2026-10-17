@@ -83,6 +83,7 @@ struct Control {
 
     /* Edit */
     int cursor_pos;
+    int replace_on_type;  /* editable combo box: its text came from the list, typing replaces it */
 };
 
 struct Dialog {
@@ -178,6 +179,22 @@ static struct Control *find_ctrl_by_id(struct Dialog *dlg, u32 id)
         if (dlg->controls[i].id == id) return &dlg->controls[i];
     }
     return NULL;
+}
+
+/* CBS_DROPDOWN (style 2): a combo box with an edit field (the save-game name) */
+static int is_edit_combo(const struct Control *c)
+{
+    return c->type == CTRL_COMBOBOX && (c->style & 3) == 2;
+}
+
+static void combo_select(struct Control *c, int idx)
+{
+    c->cur_sel = idx;
+    if (is_edit_combo(c) && idx >= 0 && idx < c->item_count) {
+        snprintf(c->text, sizeof c->text, "%s", c->items[idx].text);
+        c->cursor_pos = (int)strlen(c->text);
+        c->replace_on_type = 1;
+    }
 }
 
 /* ---- Color and graphics helpers -------------------------------------------------------- */
@@ -547,7 +564,9 @@ static void draw_combobox(u16 *buf, int scr_w, int scr_h, struct Control *c, int
 
     /* Selected text */
     const char *sel_text = NULL;
-    if (c->cur_sel >= 0 && c->cur_sel < c->item_count) {
+    if (is_edit_combo(c)) {
+        sel_text = c->text;
+    } else if (c->cur_sel >= 0 && c->cur_sel < c->item_count) {
         sel_text = c->items[c->cur_sel].text;
     } else if (c->text[0] != '\0') {
         sel_text = c->text;
@@ -1008,7 +1027,7 @@ static int dlg_event_hook(const SDL_Event *e)
                         int row = (cur_mouse_y - ly - 2) / 16;
                         int idx = c->scroll_pos + row;
                         if (idx >= 0 && idx < c->item_count) {
-                            c->cur_sel = idx;
+                            combo_select(c, idx);
                             c->is_open = 0;
                             if (dlg->proc) {
                                 u32 wp = (1 /* CBN_SELCHANGE */ << 16) | (c->id & 0xFFFF);
@@ -1254,12 +1273,13 @@ static int dlg_event_hook(const SDL_Event *e)
             if (k == SDLK_BACKSPACE) {
                 if (dlg->focused_ctrl >= 0 && dlg->focused_ctrl < dlg->num_controls) {
                     struct Control *fc = &dlg->controls[dlg->focused_ctrl];
-                    if (fc->type == CTRL_EDIT) {
+                    if (fc->type == CTRL_EDIT || is_edit_combo(fc)) {
                         int len = (int)strlen(fc->text);
+                        if (fc->replace_on_type) { fc->text[0] = 0; fc->cursor_pos = len = 0; fc->replace_on_type = 0; }
                         if (fc->cursor_pos > 0 && len > 0) {
                             memmove(&fc->text[fc->cursor_pos - 1], &fc->text[fc->cursor_pos], len - fc->cursor_pos + 1);
                             fc->cursor_pos--;
-                            if (dlg->proc) guest_call(cur_cpu, dlg->proc, 4, (u32[]){ dlg->hwnd, 0x0111, (0x300 << 16) | (fc->id & 0xFFFF), fc->hwnd });
+                            if (dlg->proc) guest_call(cur_cpu, dlg->proc, 4, (u32[]){ dlg->hwnd, 0x0111, ((fc->type == CTRL_EDIT ? 0x300u /* EN_CHANGE */ : 5u /* CBN_EDITCHANGE */) << 16) | (fc->id & 0xFFFF), fc->hwnd });
                         }
                     }
                 }
@@ -1272,14 +1292,15 @@ static int dlg_event_hook(const SDL_Event *e)
         case SDL_TEXTINPUT: {
             if (dlg->focused_ctrl >= 0 && dlg->focused_ctrl < dlg->num_controls) {
                 struct Control *fc = &dlg->controls[dlg->focused_ctrl];
-                if (fc->type == CTRL_EDIT) {
+                if (fc->type == CTRL_EDIT || is_edit_combo(fc)) {
+                    if (fc->replace_on_type) { fc->text[0] = 0; fc->cursor_pos = 0; fc->replace_on_type = 0; }
                     int len = (int)strlen(fc->text);
                     int ins_len = (int)strlen(e->text.text);
                     if (len + ins_len < (int)sizeof(fc->text) - 1) {
                         memmove(&fc->text[fc->cursor_pos + ins_len], &fc->text[fc->cursor_pos], len - fc->cursor_pos + 1);
                         memcpy(&fc->text[fc->cursor_pos], e->text.text, ins_len);
                         fc->cursor_pos += ins_len;
-                        if (dlg->proc) guest_call(cur_cpu, dlg->proc, 4, (u32[]){ dlg->hwnd, 0x0111, (0x300 << 16) | (fc->id & 0xFFFF), fc->hwnd });
+                        if (dlg->proc) guest_call(cur_cpu, dlg->proc, 4, (u32[]){ dlg->hwnd, 0x0111, ((fc->type == CTRL_EDIT ? 0x300u /* EN_CHANGE */ : 5u /* CBN_EDITCHANGE */) << 16) | (fc->id & 0xFFFF), fc->hwnd });
                     }
                 }
             }
@@ -1795,7 +1816,7 @@ u32 dlg_send(Cpu *c, u32 hwnd, u32 msg, u32 wp, u32 lp)
                 int idx = (int)wp;
                 if (idx == -1) { ctrl->cur_sel = -1; return (u32)-1; }
                 if (idx >= 0 && idx < ctrl->item_count) {
-                    ctrl->cur_sel = idx;
+                    combo_select(ctrl, idx);
                     return (u32)idx;
                 }
                 return (u32)-1;

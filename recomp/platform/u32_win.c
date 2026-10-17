@@ -915,6 +915,14 @@ static void scripted_input(void)
         if (check_alt_enter(&e)) { next++; continue; }
         if (call_keyboard_hook(&e)) { next++; continue; }
         if (!(win_event_hook && win_event_hook(&e))) handle_sdl_event(&e);
+        if (e.type == SDL_KEYDOWN && ev[next].k >= 32 && ev[next].k < 127) {
+            /* a real keyboard also delivers the typed character (text fields) */
+            SDL_Event t;
+            memset(&t, 0, sizeof t);
+            t.type = SDL_TEXTINPUT;
+            t.text.text[0] = (char)ev[next].k;
+            if (!(win_event_hook && win_event_hook(&t))) handle_sdl_event(&t);
+        }
         next++;
     }
 }
