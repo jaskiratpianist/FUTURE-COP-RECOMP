@@ -6,6 +6,7 @@
 #include <sched.h>
 #include <stdarg.h>
 #include <sys/mman.h>
+#include <unistd.h>
 #include "host.h"
 
 /* guest address space layout */
@@ -289,21 +290,38 @@ void handle_free(u32 h)
 /* ---- paths ------------------------------------------------------------------------------- */
 /* "C:\\FCOP\\Missions\\x.mis" or "missions\\x.mis" -> "<game_dir>/missions/X.MIS" as it exists
    on disk (matching each component case-insensitively) */
+static const char *host_path_in(const char *root, const char *gp, char *buf, size_t n);
+
+/* Files the installer would have copied from the CD (the Video folder) may only exist on the
+   CD's top folder, the parent of the game folder: use that when the game folder has none. */
 const char *host_path(const char *gp, char *buf, size_t n)
+{
+    char cd_root[1024], alt[1024], *slash;
+    host_path_in(game_dir, gp, buf, n);
+    if (access(buf, F_OK) == 0) return buf;
+    snprintf(cd_root, sizeof cd_root, "%s", game_dir);
+    if (!(slash = strrchr(cd_root, '/')) || slash == cd_root) return buf;
+    *slash = 0;
+    host_path_in(cd_root, gp, alt, sizeof alt);
+    if (access(alt, F_OK) == 0) snprintf(buf, n, "%s", alt);
+    return buf;
+}
+
+static const char *host_path_in(const char *root, const char *gp, char *buf, size_t n)
 {
     char tmp[1024], *part, *save = NULL;
     size_t k;
     if (gp[0] && gp[1] == ':') gp += 2;
     snprintf(tmp, sizeof tmp, "%s", gp);
     for (k = 0; tmp[k]; k++) if (tmp[k] == '\\') tmp[k] = '/';
-    snprintf(buf, n, "%s", game_dir);
+    snprintf(buf, n, "%s", root);
     for (part = strtok_r(tmp, "/", &save); part; part = strtok_r(NULL, "/", &save)) {
         DIR *d;
         struct dirent *e;
         const char *found = part;
         if (!strcmp(part, ".")) continue;
         /* the CD keeps the game in a folder "FCopLAPD" ("D:\\FCopLAPD\\Missions\\..."): that folder is game_dir */
-        if (!strcmp(buf, game_dir) && !strcasecmp(part, "FCopLAPD")) continue;
+        if (!strcmp(buf, root) && !strcasecmp(part, "FCopLAPD")) continue;
         d = opendir(buf);
         if (d) {
             while ((e = readdir(d)))
