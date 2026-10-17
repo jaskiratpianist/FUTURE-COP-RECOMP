@@ -114,6 +114,7 @@ struct DiDevHost {
     /* Joystick axis ranges (8 axes: X, Y, Z, Rx, Ry, Rz, Slider0, Slider1) */
     s32 axis_min[8];
     s32 axis_max[8];
+    u32 deadzone[8];
 
     /* SDL Joystick / Controller handles */
     SDL_GameController *gamecontroller;
@@ -156,6 +157,7 @@ static void log_unknown_iid(const char *prefix, u32 riid)
 /* Ensure SDL joystick subsystem is initialized */
 static void ensure_sdl_joystick(void)
 {
+    plat_pump();
     if (!SDL_WasInit(SDL_INIT_JOYSTICK)) {
         if (SDL_InitSubSystem(SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER) < 0) {
             plat_log("warn: SDL_InitSubSystem(JOYSTICK|GAMECONTROLLER) failed: %s", SDL_GetError());
@@ -196,13 +198,27 @@ static void fill_device_instance(u32 p, u32 d1, u16 d2, u16 d3, const u8 d4[8],
     gstrcpy(p + 0x12C, prod_name, 260);
 }
 
-/* Scale raw SDL axis (-32768..32767) to [min_val, max_val] */
-static s32 scale_axis(s16 raw, s32 min_val, s32 max_val)
+/* Scale raw SDL axis (-32768..32767) to [min_val, max_val] with deadzone */
+static s32 scale_axis(s16 raw, s32 min_val, s32 max_val, u32 deadzone)
 {
-    double norm = ((double)raw + 32768.0) / 65535.0;
-    if (norm < 0.0) norm = 0.0;
-    if (norm > 1.0) norm = 1.0;
-    return (s32)(min_val + norm * (max_val - min_val) + 0.5);
+    s32 val = raw;
+    if (deadzone > 0 && deadzone < 10000) {
+        s32 threshold = (s32)(((double)deadzone / 10000.0) * 32768.0);
+        if (raw > threshold) {
+            val = (s32)(((double)(raw - threshold) / (32767.0 - threshold)) * 32767.0);
+        } else if (raw < -threshold) {
+            val = (s32)(((double)(raw + threshold) / (32768.0 - threshold)) * -32768.0);
+        } else {
+            val = 0;
+        }
+    }
+    s32 center = (min_val + max_val) / 2;
+    if (val == 0) return center;
+    if (val > 0) {
+        return (s32)(center + ((double)val / 32767.0) * (max_val - center) + 0.5);
+    } else {
+        return (s32)(center + ((double)val / 32768.0) * (center - min_val) - 0.5);
+    }
 }
 
 /* Axis range configuration */
@@ -220,7 +236,8 @@ static void dev_set_range(struct DiDevHost *dev, u32 dwHow, u32 dwObj, s32 min_v
             dev->axis_max[idx] = max_val;
         }
     } else if (dwHow == DIPH_BYID) {
-        int idx = (int)(dwObj & 0xFFu);
+        int idx = (int)((dwObj >> 8) & 0xFFu);
+        if (idx >= 8) idx = (int)(dwObj & 0xFFu);
         if (idx >= 0 && idx < 8) {
             dev->axis_min[idx] = min_val;
             dev->axis_max[idx] = max_val;
@@ -234,7 +251,8 @@ static void dev_get_range(struct DiDevHost *dev, u32 dwHow, u32 dwObj, s32 *out_
     if (dwHow == DIPH_BYOFFSET) {
         idx = (int)(dwObj / 4);
     } else if (dwHow == DIPH_BYID) {
-        idx = (int)(dwObj & 0xFFu);
+        idx = (int)((dwObj >> 8) & 0xFFu);
+        if (idx >= 8) idx = (int)(dwObj & 0xFFu);
     }
     if (idx >= 0 && idx < 8) {
         *out_min = dev->axis_min[idx];
@@ -243,6 +261,41 @@ static void dev_get_range(struct DiDevHost *dev, u32 dwHow, u32 dwObj, s32 *out_
         *out_min = dev->axis_min[0];
         *out_max = dev->axis_max[0];
     }
+}
+
+static void dev_set_deadzone(struct DiDevHost *dev, u32 dwHow, u32 dwObj, u32 deadzone)
+{
+    if (dwHow == DIPH_DEVICE) {
+        for (int i = 0; i < 8; i++) {
+            dev->deadzone[i] = deadzone;
+        }
+    } else if (dwHow == DIPH_BYOFFSET) {
+        int idx = (int)(dwObj / 4);
+        if (idx >= 0 && idx < 8) {
+            dev->deadzone[idx] = deadzone;
+        }
+    } else if (dwHow == DIPH_BYID) {
+        int idx = (int)((dwObj >> 8) & 0xFFu);
+        if (idx >= 8) idx = (int)(dwObj & 0xFFu);
+        if (idx >= 0 && idx < 8) {
+            dev->deadzone[idx] = deadzone;
+        }
+    }
+}
+
+static u32 dev_get_deadzone(struct DiDevHost *dev, u32 dwHow, u32 dwObj)
+{
+    int idx = 0;
+    if (dwHow == DIPH_BYOFFSET) {
+        idx = (int)(dwObj / 4);
+    } else if (dwHow == DIPH_BYID) {
+        idx = (int)((dwObj >> 8) & 0xFFu);
+        if (idx >= 8) idx = (int)(dwObj & 0xFFu);
+    }
+    if (idx >= 0 && idx < 8) {
+        return dev->deadzone[idx];
+    }
+    return dev->deadzone[0];
 }
 
 /* Update buffered keyboard events */
@@ -353,6 +406,7 @@ static u32 imp_di_CreateDevice(Cpu *c)
     for (int a = 0; a < 8; a++) {
         dev->axis_min[a] = 0;
         dev->axis_max[a] = 65535;
+        dev->deadzone[a] = 0;
     }
 
     if (kind == DEV_MOUSE) {
@@ -425,14 +479,22 @@ static u32 imp_di_EnumDevices(Cpu *c)
     }
 
     if (enum_joystick) {
+        SDL_JoystickUpdate();
         int num_joysticks = SDL_NumJoysticks();
         for (int i = 0; i < num_joysticks; i++) {
-            const char *name = SDL_JoystickNameForIndex(i);
+            const char *name = NULL;
+            if (SDL_IsGameController(i)) {
+                name = SDL_GameControllerNameForIndex(i);
+            }
+            if (!name || !*name) {
+                name = SDL_JoystickNameForIndex(i);
+            }
             char default_name[64];
             if (!name || !*name) {
-                snprintf(default_name, sizeof(default_name), "Joystick %d", i + 1);
+                snprintf(default_name, sizeof(default_name), "Gamepad %d", i + 1);
                 name = default_name;
             }
+            plat_log("gamepad found: %s", name);
             fill_device_instance(enum_ddi,
                                  0x6F1D2B70u + (u32)i, 0xD5A0, 0x11CF, guid_d4_dinput,
                                  0x6F1D2B70u, 0xD5A0, 0x11CF, guid_d4_dinput,
@@ -603,6 +665,13 @@ static u32 imp_dev_GetProperty(Cpu *c)
         wr32(pdiph + 20, (u32)max_val);
         return DI_OK;
     }
+    if (prop_id == DIPROP_DEADZONE_ID) {
+        u32 dwObj = rd32(pdiph + 8);
+        u32 dwHow = rd32(pdiph + 12);
+        u32 dz = dev_get_deadzone(dev, dwHow, dwObj);
+        wr32(pdiph + 16, dz);
+        return DI_OK;
+    }
 
     return DI_OK;
 }
@@ -631,6 +700,13 @@ static u32 imp_dev_SetProperty(Cpu *c)
         dev_set_range(dev, dwHow, dwObj, min_val, max_val);
         return DI_OK;
     }
+    if (prop_id == DIPROP_DEADZONE_ID) {
+        u32 dwObj = rd32(pdiph + 8);
+        u32 dwHow = rd32(pdiph + 12);
+        u32 dz = rd32(pdiph + 16);
+        dev_set_deadzone(dev, dwHow, dwObj, dz);
+        return DI_OK;
+    }
 
     return DI_OK;
 }
@@ -639,7 +715,23 @@ static u32 imp_dev_SetProperty(Cpu *c)
 static u32 imp_dev_Acquire(Cpu *c)
 {
     struct DiDevHost *dev = (struct DiDevHost *)com_host(ARG(0));
-    if (dev) dev->acquired = 1;
+    if (dev) {
+        dev->acquired = 1;
+        if (dev->kind == DEV_JOYSTICK) {
+            if (!dev->gamecontroller && !dev->joystick) {
+                if (dev->joy_index >= 0 && dev->joy_index < SDL_NumJoysticks()) {
+                    if (SDL_IsGameController(dev->joy_index)) {
+                        dev->gamecontroller = SDL_GameControllerOpen(dev->joy_index);
+                        if (dev->gamecontroller) dev->joystick = SDL_GameControllerGetJoystick(dev->gamecontroller);
+                    }
+                    if (!dev->joystick) dev->joystick = SDL_JoystickOpen(dev->joy_index);
+                }
+            }
+            const char *name = dev->gamecontroller ? SDL_GameControllerName(dev->gamecontroller) :
+                               dev->joystick ? SDL_JoystickName(dev->joystick) : "Gamepad";
+            plat_log("gamepad acquired: %s", name);
+        }
+    }
     return DI_OK;
 }
 
@@ -695,8 +787,9 @@ static u32 imp_dev_GetDeviceState(Cpu *c)
         u32 sz = cbData < 80 ? cbData : 80;
         memset(G(lpvData), 0, sz);
         SDL_JoystickUpdate();
+        SDL_GameControllerUpdate();
 
-        s16 raw_lx = 0, raw_ly = 0, raw_lz = -32768, raw_rx = 0, raw_ry = 0, raw_rz = -32768;
+        s16 raw_lx = 0, raw_ly = 0, raw_lz = 0, raw_rx = 0, raw_ry = 0, raw_rz = 0;
         s16 raw_slider0 = 0, raw_slider1 = 0;
         u32 pov = 0xFFFFFFFFu;
         u8 btn[32] = {0};
@@ -706,8 +799,8 @@ static u32 imp_dev_GetDeviceState(Cpu *c)
             raw_ly = SDL_GameControllerGetAxis(dev->gamecontroller, SDL_CONTROLLER_AXIS_LEFTY);
             raw_rx = SDL_GameControllerGetAxis(dev->gamecontroller, SDL_CONTROLLER_AXIS_RIGHTX);
             raw_ry = SDL_GameControllerGetAxis(dev->gamecontroller, SDL_CONTROLLER_AXIS_RIGHTY);
-            raw_lz = SDL_GameControllerGetAxis(dev->gamecontroller, SDL_CONTROLLER_AXIS_TRIGGERLEFT);
-            raw_rz = SDL_GameControllerGetAxis(dev->gamecontroller, SDL_CONTROLLER_AXIS_TRIGGERRIGHT);
+            s16 trig_l = SDL_GameControllerGetAxis(dev->gamecontroller, SDL_CONTROLLER_AXIS_TRIGGERLEFT);
+            s16 trig_r = SDL_GameControllerGetAxis(dev->gamecontroller, SDL_CONTROLLER_AXIS_TRIGGERRIGHT);
 
             int up = SDL_GameControllerGetButton(dev->gamecontroller, SDL_CONTROLLER_BUTTON_DPAD_UP);
             int down = SDL_GameControllerGetButton(dev->gamecontroller, SDL_CONTROLLER_BUTTON_DPAD_DOWN);
@@ -723,6 +816,15 @@ static u32 imp_dev_GetDeviceState(Cpu *c)
             else if (down) pov = 18000;
             else if (left) pov = 27000;
 
+            /* D-pad also acts as X/Y when stick is centred */
+            if (abs(raw_lx) <= 4000 && abs(raw_ly) <= 4000) {
+                if (left && !right) raw_lx = -32768;
+                else if (right && !left) raw_lx = 32767;
+                if (up && !down) raw_ly = -32768;
+                else if (down && !up) raw_ly = 32767;
+            }
+
+            /* Buttons 0..7: A, B, X, Y, LB, RB, Back, Start */
             btn[0] = SDL_GameControllerGetButton(dev->gamecontroller, SDL_CONTROLLER_BUTTON_A) ? 0x80 : 0;
             btn[1] = SDL_GameControllerGetButton(dev->gamecontroller, SDL_CONTROLLER_BUTTON_B) ? 0x80 : 0;
             btn[2] = SDL_GameControllerGetButton(dev->gamecontroller, SDL_CONTROLLER_BUTTON_X) ? 0x80 : 0;
@@ -731,17 +833,24 @@ static u32 imp_dev_GetDeviceState(Cpu *c)
             btn[5] = SDL_GameControllerGetButton(dev->gamecontroller, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) ? 0x80 : 0;
             btn[6] = SDL_GameControllerGetButton(dev->gamecontroller, SDL_CONTROLLER_BUTTON_BACK) ? 0x80 : 0;
             btn[7] = SDL_GameControllerGetButton(dev->gamecontroller, SDL_CONTROLLER_BUTTON_START) ? 0x80 : 0;
-            btn[8] = SDL_GameControllerGetButton(dev->gamecontroller, SDL_CONTROLLER_BUTTON_GUIDE) ? 0x80 : 0;
-            btn[9] = SDL_GameControllerGetButton(dev->gamecontroller, SDL_CONTROLLER_BUTTON_LEFTSTICK) ? 0x80 : 0;
-            btn[10] = SDL_GameControllerGetButton(dev->gamecontroller, SDL_CONTROLLER_BUTTON_RIGHTSTICK) ? 0x80 : 0;
+            /* Buttons 8..9: triggers (LT, RT) */
+            btn[8] = (trig_l > 8000) ? 0x80 : 0;
+            btn[9] = (trig_r > 8000) ? 0x80 : 0;
+            btn[10] = SDL_GameControllerGetButton(dev->gamecontroller, SDL_CONTROLLER_BUTTON_LEFTSTICK) ? 0x80 : 0;
+            btn[11] = SDL_GameControllerGetButton(dev->gamecontroller, SDL_CONTROLLER_BUTTON_RIGHTSTICK) ? 0x80 : 0;
+            btn[12] = SDL_GameControllerGetButton(dev->gamecontroller, SDL_CONTROLLER_BUTTON_GUIDE) ? 0x80 : 0;
+
+            /* Right stick also available via Z/Rz */
+            raw_lz = raw_rx;
+            raw_rz = raw_ry;
         } else if (dev->joystick) {
             int num_axes = SDL_JoystickNumAxes(dev->joystick);
             if (num_axes > 0) raw_lx = SDL_JoystickGetAxis(dev->joystick, 0);
             if (num_axes > 1) raw_ly = SDL_JoystickGetAxis(dev->joystick, 1);
-            if (num_axes > 2) raw_lz = SDL_JoystickGetAxis(dev->joystick, 2);
-            if (num_axes > 3) raw_rx = SDL_JoystickGetAxis(dev->joystick, 3);
-            if (num_axes > 4) raw_ry = SDL_JoystickGetAxis(dev->joystick, 4);
-            if (num_axes > 5) raw_rz = SDL_JoystickGetAxis(dev->joystick, 5);
+            if (num_axes > 2) raw_rx = SDL_JoystickGetAxis(dev->joystick, 2);
+            if (num_axes > 3) raw_ry = SDL_JoystickGetAxis(dev->joystick, 3);
+            raw_lz = raw_rx;
+            raw_rz = raw_ry;
 
             if (SDL_JoystickNumHats(dev->joystick) > 0) {
                 Uint8 hat = SDL_JoystickGetHat(dev->joystick, 0);
@@ -753,6 +862,13 @@ static u32 imp_dev_GetDeviceState(Cpu *c)
                 else if (hat & SDL_HAT_RIGHT) pov = 9000;
                 else if (hat & SDL_HAT_DOWN) pov = 18000;
                 else if (hat & SDL_HAT_LEFT) pov = 27000;
+
+                if (abs(raw_lx) <= 4000 && abs(raw_ly) <= 4000) {
+                    if ((hat & SDL_HAT_LEFT) && !(hat & SDL_HAT_RIGHT)) raw_lx = -32768;
+                    else if ((hat & SDL_HAT_RIGHT) && !(hat & SDL_HAT_LEFT)) raw_lx = 32767;
+                    if ((hat & SDL_HAT_UP) && !(hat & SDL_HAT_DOWN)) raw_ly = -32768;
+                    else if ((hat & SDL_HAT_DOWN) && !(hat & SDL_HAT_UP)) raw_ly = 32767;
+                }
             }
 
             int num_btns = SDL_JoystickNumButtons(dev->joystick);
@@ -761,14 +877,14 @@ static u32 imp_dev_GetDeviceState(Cpu *c)
             }
         }
 
-        s32 lX = scale_axis(raw_lx, dev->axis_min[0], dev->axis_max[0]);
-        s32 lY = scale_axis(raw_ly, dev->axis_min[1], dev->axis_max[1]);
-        s32 lZ = scale_axis(raw_lz, dev->axis_min[2], dev->axis_max[2]);
-        s32 lRx = scale_axis(raw_rx, dev->axis_min[3], dev->axis_max[3]);
-        s32 lRy = scale_axis(raw_ry, dev->axis_min[4], dev->axis_max[4]);
-        s32 lRz = scale_axis(raw_rz, dev->axis_min[5], dev->axis_max[5]);
-        s32 slider0 = scale_axis(raw_slider0, dev->axis_min[6], dev->axis_max[6]);
-        s32 slider1 = scale_axis(raw_slider1, dev->axis_min[7], dev->axis_max[7]);
+        s32 lX = scale_axis(raw_lx, dev->axis_min[0], dev->axis_max[0], dev->deadzone[0]);
+        s32 lY = scale_axis(raw_ly, dev->axis_min[1], dev->axis_max[1], dev->deadzone[1]);
+        s32 lZ = scale_axis(raw_lz, dev->axis_min[2], dev->axis_max[2], dev->deadzone[2]);
+        s32 lRx = scale_axis(raw_rx, dev->axis_min[3], dev->axis_max[3], dev->deadzone[3]);
+        s32 lRy = scale_axis(raw_ry, dev->axis_min[4], dev->axis_max[4], dev->deadzone[4]);
+        s32 lRz = scale_axis(raw_rz, dev->axis_min[5], dev->axis_max[5], dev->deadzone[5]);
+        s32 slider0 = scale_axis(raw_slider0, dev->axis_min[6], dev->axis_max[6], dev->deadzone[6]);
+        s32 slider1 = scale_axis(raw_slider1, dev->axis_min[7], dev->axis_max[7], dev->deadzone[7]);
 
         if (cbData >= 4)  wr32(lpvData + 0, (u32)lX);
         if (cbData >= 8)  wr32(lpvData + 4, (u32)lY);
@@ -1024,6 +1140,7 @@ static u32 imp_dev2_Poll(Cpu *c)
     (void)c;
     plat_pump();
     SDL_JoystickUpdate();
+    SDL_GameControllerUpdate();
     return DI_OK;
 }
 

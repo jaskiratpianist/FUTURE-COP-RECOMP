@@ -167,4 +167,7 @@ else:
     prompt = open(os.path.join(ROOT, "docs", "PLATFORM_TASK.md")).read().replace("{ASSIGNMENT}", assign)
 r = subprocess.run(["agy", "--model", a.model, "--output-format", "json", "-p", prompt], cwd=ROOT,
                    capture_output=True, text=True, timeout=7200)
+name = os.path.splitext(os.path.basename(a.task))[0] if a.task else a.group
+with open(os.path.join(ROOT, "build", f"agy_{name}.out"), "w") as f:  # the whole reply
+    f.write(r.stdout + "\n" + r.stderr)
 print(r.stdout[-3000:], r.stderr[-1000:])

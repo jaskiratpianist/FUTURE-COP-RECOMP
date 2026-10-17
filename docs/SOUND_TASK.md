@@ -73,6 +73,9 @@ same speed (compare the frame numbers in `--png` runs with and without your chan
 
 ## Rules
 
+- Run the test command in the foreground and wait for its output; never as a background
+  task (your session ends while you wait for one).
+
 - Plain C99 + SDL2 + POSIX. Helpers `static`. No empty stubs.
 - Read files with your file-reading tool, never with shell commands. Every shell command
   except the test command is blocked; if an action is denied, continue.

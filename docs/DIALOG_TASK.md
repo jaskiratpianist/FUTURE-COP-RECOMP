@@ -160,6 +160,9 @@ your PNGs critically (alignment, text clipping, colours) and fix what looks wron
 
 ## Rules
 
+- Run the test command in the foreground and wait for its output; never as a background
+  task (your session ends while you wait for one).
+
 - Plain C99 + SDL2 + POSIX. No other libraries. Helpers `static` inside dialog.c.
 - Read files with your file-reading tool, never with shell commands. Every shell command
   except the test command above is blocked; if an action is denied, continue.
