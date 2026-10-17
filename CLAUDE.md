@@ -121,7 +121,13 @@ it fails to compile. agy needs these allow rules in its settings, with this repo
 path (the user adds them):
 `command(.venv/bin/python -I recomp/plat_test.py)` and
 `write_file(<repo>/recomp/platform)`, plus the repository under `trustedWorkspaces`.
-Workers quit when a blocked tool is denied (a shell `cat`, a URL fetch); just restart them.
+Workers quit when a blocked tool is denied (a shell `cat`, a URL fetch, reading a file outside
+the repository such as SDL headers: put the API facts they need in the brief); just restart
+them. A worker's session also ends when it waits for a test it started as a background task,
+so briefs say "run the test in the foreground", and long tasks should append findings to a
+file as they go. The whole reply is saved in `build/agy_<task>.out`. Two workers can run at
+once on different files (plat_test.py serialises the builds). Review their claims with your
+own test run (`plat_test.py` is headless; `--png`, `--audio`, `--input`).
 
 ## Lessons from the platform work
 
@@ -162,15 +168,27 @@ Workers quit when a blocked tool is denied (a shell `cat`, a URL fetch); just re
 
 ## Next steps
 
-1. Done: the menu works with the mouse and the first mission starts, renders and responds
-   to the keypad. Next: play longer (FCOP_INPUT scripts), check other missions and the
+1. Done: menus, missions in both modes (incl. 2-player split screen), sound and music,
+   dialogs, settings, resolutions/fullscreen, arrow keys, key rebinding, gamepads (via SDL,
+   tested with the virtual pad only). Next: play longer (FCOP_INPUT scripts), check other missions and the
    in-game Esc menu, map arrow keys/WASD as extra defaults later (preferences menu).
 2. Fix in-game crashes and rendering (expect more stub/offset bugs in Gemini's code;
    review ddraw.c, dsound.c, dinput.c against the DirectX 5 SDK layouts).
 3. Sound through dsound.c and SDL audio; music streaming uses the play/write cursors.
-4. Glide: `LoadLibraryA("glide2x.dll")` currently returns 0 (software renderer). Implement
-   the gr* functions the EXE names (strings like `_grDrawTriangle@12`) on OpenGL, return
-   them from GetProcAddress, and render at any resolution.
+4. Hardware 3D / high resolution. Findings (2026-10-17): the game draws 3D through EA's
+   **THRASH** driver interface: 34 `_THRASH_*` functions in a driver DLL named by the
+   registry value "Thrash Driver". The CD has them in `game_files/setup/thrash/` (voodooa,
+   voodoo2a (imports glide3x), d3da (Oct 1998, newest), **opengla** (THRASH on OpenGL,
+   loads opengl32 dynamically), softtria/softlina (software), ...), all based at 0x60000000
+   (free in our guest layout) with relocations. The installer copies one into the game
+   folder; ours has none and the game reads only `SoftwareRendering`, so it uses its built-in
+   software renderer and never calls LoadLibraryA for a driver; find what makes it choose
+   hardware (the `Group` value, display caps). The EXE also names the whole Glide 2 API.
+   Two routes: (A) recompile a driver DLL with x86c (needs multi-image support and function
+   discovery for DLLs) and forward opengl32 calls to host GL, scaling the viewport for any
+   resolution; (B) implement the 34 THRASH functions natively on OpenGL, using opengla.dll
+   as the reference for their semantics. B gives the cleanest high-res and texture
+   replacement path; decide with the user.
 5. Dialogs work (pause/resume, quit prompt, preferences). Still to check: Controller
    Configuration key capture, Audio sliders (once dsound plays), Load/Save. Then native extras
    (resolution, scaling, fullscreen, arrow/WASD keys) added to the Preferences dialog, and
