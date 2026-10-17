@@ -159,6 +159,11 @@ own test run (`plat_test.py` is headless; `--png`, `--audio`, `--input`).
   volumes...). The installer used to create the key; gdi_misc.c creates it now. The game saves
   them **when it exits normally** (plat_test's kill skips that: quit with
   `click@156,306` + `Return` in the input script). `FCOP_TRACE_REG=1` logs registry calls.
+- Key bindings: `controls.txt` in the game folder, written **as soon as Controller
+  Configuration closes with OK** (tests that rebind keys change the player's real bindings:
+  back the file up and restore it). In memory: 14 (device, key) pairs per player at
+  0x511c20 / 0x511ca0, actions 0..3 forward, back, right, left; the arrow keys press
+  whatever player 1 has bound to those four (u32_misc.c `arrow_alias_down`).
 - Display: menus are always 640x480; the chosen resolution and fullscreen apply in missions.
   Windowed, DirectDraw's primary surface is the whole desktop (we report DESKTOP_W x DESKTOP_H,
   1600x1200, win.h) and only the main window's rectangle is shown. Fullscreen comes from
