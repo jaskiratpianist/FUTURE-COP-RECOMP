@@ -282,9 +282,8 @@ static void *video_worker(void *arg)
         msg_post(fg->notify_hwnd, fg->notify_msg, 0, fg->notify_inst_data);
     }
 
-    if (win_event_hook == video_event_hook) {
-        win_event_hook = NULL;
-    }
+    /* the skip hook stays installed: the game may already have started the next video
+       (the hook checks that a video is playing); clearing it here raced with that */
 
     plat_log("DirectShow: video_worker finished for '%s' (ended=%d, skipped=%d, frames=%d)",
              fg->path, fg->ended, fg->skipped, frame_count);
@@ -758,7 +757,11 @@ static u32 imp_vw_get_BackgroundPalette(Cpu *c) { if (ARG(1)) wr32(ARG(1), 0); r
 static u32 imp_vw_put_Visible(Cpu *c)
 {
     FilterGraph *fg = (FilterGraph *)com_host(ARG(0));
-    if (fg) fg->video_visible = (int)ARG(1);
+    if (!fg) return 0;
+    /* hiding the video window uncovers the game's window: Windows then sends it WM_PAINT,
+       and the game redraws its whole screen (the menu background) only then */
+    if (!ARG(1) && fg->owner_hwnd) msg_post(fg->owner_hwnd, 0x000F /* WM_PAINT */, 0, 0);
+    fg->video_visible = (int)ARG(1);
     return 0;
 }
 

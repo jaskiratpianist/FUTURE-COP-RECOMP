@@ -914,7 +914,7 @@ static void scripted_input(void)
                  ev[next].k ? SDL_GetKeyName(ev[next].k) : "click", now);
         if (check_alt_enter(&e)) { next++; continue; }
         if (call_keyboard_hook(&e)) { next++; continue; }
-        if (!(win_event_hook && win_event_hook(&e))) handle_sdl_event(&e);
+        if (!(win_event_hook && win_event_hook(&e)) || e.type == SDL_KEYUP) handle_sdl_event(&e);
         if (e.type == SDL_KEYDOWN && ev[next].k >= 32 && ev[next].k < 127) {
             /* a real keyboard also delivers the typed character (text fields) */
             SDL_Event t;
@@ -937,7 +937,9 @@ void plat_pump(void)
     while (SDL_PollEvent(&e)) {
         if (check_alt_enter(&e)) continue;
         if (call_keyboard_hook(&e)) continue;
-        if (win_event_hook && e.type != SDL_QUIT && win_event_hook(&e)) continue;
+        /* a dialog or video may take key presses, but releases always reach the key state:
+           otherwise Esc (which opened the pause bar) stays "down" and pauses the next mission */
+        if (win_event_hook && e.type != SDL_QUIT && win_event_hook(&e) && e.type != SDL_KEYUP) continue;
         handle_sdl_event(&e);
     }
     check_timers();
