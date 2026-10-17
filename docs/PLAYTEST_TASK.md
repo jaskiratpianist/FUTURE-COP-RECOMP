@@ -44,6 +44,16 @@ menus), an SDL key name held 100 ms (`Return`, `Escape`, `Down`, `space`, `Tab`,
    Resume; Abort back to the menu and start again.
 4. Two-player mode if the menu offers it.
 
+## Write findings down as you go
+
+After **every** test run, append one short entry to `recomp/platform/playtest_report.txt`
+(create it if needed; it is the only file you may write): the script, OK or PROBLEM, and
+for a problem what happened and what you expected. Your session may end without warning, so
+the file is what counts. Previous runs found menus, two modes, several districts, 2-player,
+movement, weapons, map, camera, pause/resume/abort working: concentrate on what is left
+(HELP, BRIEFING, save then load a game, long play until death or mission end, the
+hovercraft, other districts' missions, Audio and Controls from the pause bar).
+
 ## Final reply
 
 A numbered list of problems. For each: the script that shows it, what happened (log lines,

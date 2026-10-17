@@ -154,10 +154,13 @@ static void log_unknown_iid(const char *prefix, u32 riid)
              prefix, d1, d2, d3, d4[0], d4[1], d4[2], d4[3], d4[4], d4[5], d4[6], d4[7]);
 }
 
+extern void ensure_virtual_pad(void);
+
 /* Ensure SDL joystick subsystem is initialized */
 static void ensure_sdl_joystick(void)
 {
     plat_pump();
+    ensure_virtual_pad();
     if (!SDL_WasInit(SDL_INIT_JOYSTICK)) {
         if (SDL_InitSubSystem(SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER) < 0) {
             plat_log("warn: SDL_InitSubSystem(JOYSTICK|GAMECONTROLLER) failed: %s", SDL_GetError());
@@ -727,8 +730,10 @@ static u32 imp_dev_Acquire(Cpu *c)
                     if (!dev->joystick) dev->joystick = SDL_JoystickOpen(dev->joy_index);
                 }
             }
-            const char *name = dev->gamecontroller ? SDL_GameControllerName(dev->gamecontroller) :
-                               dev->joystick ? SDL_JoystickName(dev->joystick) : "Gamepad";
+            const char *name = NULL;
+            if (dev->gamecontroller) name = SDL_GameControllerName(dev->gamecontroller);
+            if (!name && dev->joystick) name = SDL_JoystickName(dev->joystick);
+            if (!name || !*name) name = "Gamepad";
             plat_log("gamepad acquired: %s", name);
         }
     }

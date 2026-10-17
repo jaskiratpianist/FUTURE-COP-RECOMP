@@ -672,24 +672,149 @@ static void handle_sdl_event(const SDL_Event *e)
     }
 }
 
+SDL_Joystick *fcop_virtual_joy = NULL;
+
+void ensure_virtual_pad(void)
+{
+    static int inited = 0;
+    if (inited) return;
+    inited = 1;
+
+    const char *inp = getenv("FCOP_INPUT");
+    const char *vpad = getenv("FCOP_VIRTUAL_PAD");
+    int need_pad = (vpad && atoi(vpad) != 0);
+    if (!need_pad && inp && strstr(inp, "pad_")) {
+        need_pad = 1;
+    }
+    if (!need_pad) return;
+
+    if (!SDL_WasInit(SDL_INIT_JOYSTICK) || !SDL_WasInit(SDL_INIT_GAMECONTROLLER)) {
+        if (SDL_InitSubSystem(SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER) < 0) {
+            plat_log("warn: SDL_InitSubSystem failed: %s", SDL_GetError());
+            return;
+        }
+        SDL_JoystickEventState(SDL_ENABLE);
+        SDL_GameControllerEventState(SDL_ENABLE);
+    }
+
+    int idx = SDL_JoystickAttachVirtual(SDL_JOYSTICK_TYPE_GAMECONTROLLER,
+                                       SDL_CONTROLLER_AXIS_MAX,
+                                       SDL_CONTROLLER_BUTTON_MAX, 0);
+    if (idx >= 0) {
+        fcop_virtual_joy = SDL_JoystickOpen(idx);
+        plat_log("virtual pad created: index %d, joy %p", idx, (void *)fcop_virtual_joy);
+    } else {
+        plat_log("warn: SDL_JoystickAttachVirtual failed: %s", SDL_GetError());
+    }
+}
+
+static int parse_pad_btn(const char *name)
+{
+    if (!strcasecmp(name, "pad_a")) return SDL_CONTROLLER_BUTTON_A;
+    if (!strcasecmp(name, "pad_b")) return SDL_CONTROLLER_BUTTON_B;
+    if (!strcasecmp(name, "pad_x")) return SDL_CONTROLLER_BUTTON_X;
+    if (!strcasecmp(name, "pad_y")) return SDL_CONTROLLER_BUTTON_Y;
+    if (!strcasecmp(name, "pad_back")) return SDL_CONTROLLER_BUTTON_BACK;
+    if (!strcasecmp(name, "pad_guide")) return SDL_CONTROLLER_BUTTON_GUIDE;
+    if (!strcasecmp(name, "pad_start")) return SDL_CONTROLLER_BUTTON_START;
+    if (!strcasecmp(name, "pad_leftstick") || !strcasecmp(name, "pad_ls")) return SDL_CONTROLLER_BUTTON_LEFTSTICK;
+    if (!strcasecmp(name, "pad_rightstick") || !strcasecmp(name, "pad_rs")) return SDL_CONTROLLER_BUTTON_RIGHTSTICK;
+    if (!strcasecmp(name, "pad_lb") || !strcasecmp(name, "pad_leftshoulder") || !strcasecmp(name, "pad_lshoulder"))
+        return SDL_CONTROLLER_BUTTON_LEFTSHOULDER;
+    if (!strcasecmp(name, "pad_rb") || !strcasecmp(name, "pad_rightshoulder") || !strcasecmp(name, "pad_rshoulder"))
+        return SDL_CONTROLLER_BUTTON_RIGHTSHOULDER;
+    if (!strcasecmp(name, "pad_up") || !strcasecmp(name, "pad_dpad_up")) return SDL_CONTROLLER_BUTTON_DPAD_UP;
+    if (!strcasecmp(name, "pad_down") || !strcasecmp(name, "pad_dpad_down")) return SDL_CONTROLLER_BUTTON_DPAD_DOWN;
+    if (!strcasecmp(name, "pad_left") || !strcasecmp(name, "pad_dpad_left")) return SDL_CONTROLLER_BUTTON_DPAD_LEFT;
+    if (!strcasecmp(name, "pad_right") || !strcasecmp(name, "pad_dpad_right")) return SDL_CONTROLLER_BUTTON_DPAD_RIGHT;
+    return -1;
+}
+
+static int parse_pad_axis(const char *name)
+{
+    if (!strcasecmp(name, "pad_lx") || !strcasecmp(name, "pad_leftx")) return SDL_CONTROLLER_AXIS_LEFTX;
+    if (!strcasecmp(name, "pad_ly") || !strcasecmp(name, "pad_lefty")) return SDL_CONTROLLER_AXIS_LEFTY;
+    if (!strcasecmp(name, "pad_rx") || !strcasecmp(name, "pad_rightx")) return SDL_CONTROLLER_AXIS_RIGHTX;
+    if (!strcasecmp(name, "pad_ry") || !strcasecmp(name, "pad_righty")) return SDL_CONTROLLER_AXIS_RIGHTY;
+    if (!strcasecmp(name, "pad_lt") || !strcasecmp(name, "pad_triggerleft") || !strcasecmp(name, "pad_ltrigger"))
+        return SDL_CONTROLLER_AXIS_TRIGGERLEFT;
+    if (!strcasecmp(name, "pad_rt") || !strcasecmp(name, "pad_triggerright") || !strcasecmp(name, "pad_rtrigger"))
+        return SDL_CONTROLLER_AXIS_TRIGGERRIGHT;
+    return -1;
+}
+
+static u32 keyboard_hook = 0;
+
+static int call_keyboard_hook(const SDL_Event *e)
+{
+    if (!keyboard_hook || !cur_cpu) return 0;
+    if (e->type != SDL_KEYDOWN && e->type != SDL_KEYUP) return 0;
+
+    u32 vk = sdl_to_vk(e->key.keysym.sym);
+    u32 dik = sdl_to_dik(e->key.keysym.scancode);
+    int is_up = (e->type == SDL_KEYUP);
+    int alt = (e->key.keysym.mod & KMOD_ALT) != 0;
+    u32 lparam = 1 | ((dik & 0xFF) << 16) | (alt ? (1 << 29) : 0);
+    if (is_up) lparam |= (1u << 30) | (1u << 31);
+    else if (e->key.repeat) lparam |= (1 << 30);
+
+    /* Update vk_down and dik_down */
+    if (is_up) {
+        if (vk < 256) vk_down[vk] = 0;
+        if (dik < 256) dik_down[dik] = 0;
+        if (!vk_down[0xA0] && !vk_down[0xA1]) vk_down[0x10] = 0;
+        if (!vk_down[0xA2] && !vk_down[0xA3]) vk_down[0x11] = 0;
+        if (!vk_down[0xA4] && !vk_down[0xA5]) vk_down[0x12] = 0;
+    } else {
+        if (vk < 256) vk_down[vk] = 0x80;
+        if (dik < 256) dik_down[dik] = 0x80;
+        if (vk == 0xA0 || vk == 0xA1) vk_down[0x10] = 0x80;
+        if (vk == 0xA2 || vk == 0xA3) vk_down[0x11] = 0x80;
+        if (vk == 0xA4 || vk == 0xA5) vk_down[0x12] = 0x80;
+    }
+
+    u32 args[3] = { 0 /* HC_ACTION */, vk, lparam };
+    u32 ret = guest_call(cur_cpu, keyboard_hook, 3, args);
+    return (ret != 0);
+}
+
+enum EvKind {
+    EV_KEY = 0,
+    EV_MOUSE,
+    EV_PAD_BTN,
+    EV_PAD_AXIS
+};
+
 /* FCOP_INPUT="5000:Down 6000:Return*500 9000:click@320,240": scripted input for headless tests.
    Each item is milliseconds since the first pump, then an SDL key name (held for 100 ms, or
-   for *N ms; "_" stands for a space, as in Keypad_8) or a left click at game coordinates. */
+   for *N ms; "_" stands for a space, as in Keypad_8) or a left click at game coordinates,
+   or a virtual pad button (pad_a*500, pad_up*1000) or axis (pad_lx=-32768*1000). */
 static void scripted_input(void)
 {
     static const char *script;
     static int inited;
     static Uint32 t0;
-    static struct { Uint32 t; int down, x, y; SDL_Keycode k; } ev[256];  /* down: 0 up, 1 down, 2 mouse move */
+    static struct {
+        Uint32 t;
+        enum EvKind kind;
+        int down;
+        int x, y;
+        SDL_Keycode k;
+        int pad_index;
+        s32 pad_val;
+    } ev[512];
     static int n, next;
     Uint32 now;
+
+    ensure_virtual_pad();
+
     if (!inited) {
         char buf[64];
         const char *p;
         inited = 1;
         script = getenv("FCOP_INPUT");
         t0 = SDL_GetTicks();
-        for (p = script; p && *p && n < 253; ) {
+        for (p = script; p && *p && n < 508; ) {
             unsigned t;
             int x, y, len = 0;
             while (*p == ' ') p++;
@@ -697,9 +822,33 @@ static void scripted_input(void)
             p += len;
             if (sscanf(buf, "click@%d,%d", &x, &y) == 2) {
                 /* move there first (down = 2), as a real mouse does, then press and release */
-                ev[n].t = t >= 200 ? t - 200 : 0; ev[n].down = 2; ev[n].x = x; ev[n].y = y; ev[n].k = 0; n++;
+                ev[n].t = t >= 200 ? t - 200 : 0; ev[n].kind = EV_MOUSE; ev[n].down = 2; ev[n].x = x; ev[n].y = y; ev[n].k = 0; n++;
                 ev[n] = ev[n - 1]; ev[n].t = t; ev[n].down = 1; n++;
                 ev[n] = ev[n - 1]; ev[n].t = t + 100; ev[n].down = 0; n++;
+            } else if (!strncmp(buf, "pad_", 4)) {
+                char *star = strchr(buf, '*');
+                unsigned hold = star ? (unsigned)atoi(star + 1) : 100;
+                if (star) *star = '\0';
+                char *eq = strchr(buf, '=');
+                if (eq) {
+                    *eq = '\0';
+                    int val = atoi(eq + 1);
+                    int axis = parse_pad_axis(buf);
+                    if (axis < 0) {
+                        plat_log("FCOP_INPUT: unknown pad axis '%s'", buf);
+                    } else {
+                        ev[n].t = t; ev[n].kind = EV_PAD_AXIS; ev[n].pad_index = axis; ev[n].pad_val = val; n++;
+                        ev[n].t = t + hold; ev[n].kind = EV_PAD_AXIS; ev[n].pad_index = axis; ev[n].pad_val = 0; n++;
+                    }
+                } else {
+                    int btn = parse_pad_btn(buf);
+                    if (btn < 0) {
+                        plat_log("FCOP_INPUT: unknown pad button '%s'", buf);
+                    } else {
+                        ev[n].t = t; ev[n].kind = EV_PAD_BTN; ev[n].pad_index = btn; ev[n].pad_val = 1; ev[n].down = 1; n++;
+                        ev[n].t = t + hold; ev[n].kind = EV_PAD_BTN; ev[n].pad_index = btn; ev[n].pad_val = 0; ev[n].down = 0; n++;
+                    }
+                }
             } else {
                 char *star = strchr(buf, '*');
                 unsigned hold = star ? (unsigned)atoi(star + 1) : 100;
@@ -708,7 +857,7 @@ static void scripted_input(void)
                 for (char *q = buf; *q; q++) if (*q == '_') *q = ' ';  /* "Keypad_8" */
                 k = SDL_GetKeyFromName(buf);
                 if (k == SDLK_UNKNOWN) { plat_log("FCOP_INPUT: unknown key '%s'", buf); continue; }
-                ev[n].t = t; ev[n].down = 1; ev[n].k = k; n++;
+                ev[n].t = t; ev[n].kind = EV_KEY; ev[n].down = 1; ev[n].k = k; n++;
                 ev[n] = ev[n - 1]; ev[n].t = t + hold; ev[n].down = 0; n++;
             }
         }
@@ -720,9 +869,31 @@ static void scripted_input(void)
     }
     now = SDL_GetTicks() - t0;
     while (next < n && ev[next].t <= now) {
+        if (ev[next].kind == EV_PAD_BTN) {
+            if (fcop_virtual_joy) {
+                SDL_JoystickSetVirtualButton(fcop_virtual_joy, ev[next].pad_index, (Uint8)ev[next].pad_val);
+                SDL_JoystickUpdate();
+                SDL_GameControllerUpdate();
+            }
+            plat_log("FCOP_INPUT: pad button %d %s at %u ms", ev[next].pad_index,
+                     ev[next].pad_val ? "pressed" : "released", now);
+            next++;
+            continue;
+        }
+        if (ev[next].kind == EV_PAD_AXIS) {
+            if (fcop_virtual_joy) {
+                SDL_JoystickSetVirtualAxis(fcop_virtual_joy, ev[next].pad_index, (Sint16)ev[next].pad_val);
+                SDL_JoystickUpdate();
+                SDL_GameControllerUpdate();
+            }
+            plat_log("FCOP_INPUT: pad axis %d set to %d at %u ms", ev[next].pad_index,
+                     (int)ev[next].pad_val, now);
+            next++;
+            continue;
+        }
         SDL_Event e;
         memset(&e, 0, sizeof e);
-        if (ev[next].k) {
+        if (ev[next].kind == EV_KEY) {
             e.type = ev[next].down ? SDL_KEYDOWN : SDL_KEYUP;
             e.key.state = ev[next].down ? SDL_PRESSED : SDL_RELEASED;
             e.key.keysym.sym = ev[next].k;
@@ -742,6 +913,7 @@ static void scripted_input(void)
         plat_log("FCOP_INPUT: %s %s at %u ms", ev[next].down == 2 ? "move" : ev[next].down ? "press" : "release",
                  ev[next].k ? SDL_GetKeyName(ev[next].k) : "click", now);
         if (check_alt_enter(&e)) { next++; continue; }
+        if (call_keyboard_hook(&e)) { next++; continue; }
         if (!(win_event_hook && win_event_hook(&e))) handle_sdl_event(&e);
         next++;
     }
@@ -756,6 +928,7 @@ void plat_pump(void)
     scripted_input();
     while (SDL_PollEvent(&e)) {
         if (check_alt_enter(&e)) continue;
+        if (call_keyboard_hook(&e)) continue;
         if (win_event_hook && e.type != SDL_QUIT && win_event_hook(&e)) continue;
         handle_sdl_event(&e);
     }
@@ -1686,6 +1859,12 @@ static u32 imp_GetSystemMetrics(Cpu *c)
 /* HHOOK SetWindowsHookExA(int idHook, HOOKPROC lpfn, HINSTANCE hMod, DWORD dwThreadId) */
 static u32 imp_SetWindowsHookExA(Cpu *c)
 {
+    u32 idHook = ARG(0);
+    u32 lpfn = ARG(1);
+    if (idHook == 2 /* WH_KEYBOARD */) {
+        keyboard_hook = lpfn;
+        plat_log("SetWindowsHookExA: WH_KEYBOARD hook set to 0x%08x", lpfn);
+    }
     static u32 next_hook = 0x003C0001u;
     return next_hook++;
 }
@@ -1693,6 +1872,8 @@ static u32 imp_SetWindowsHookExA(Cpu *c)
 /* BOOL UnhookWindowsHookEx(HHOOK hhk) */
 static u32 imp_UnhookWindowsHookEx(Cpu *c)
 {
+    plat_log("UnhookWindowsHookEx: hook 0x%08x removed", ARG(0));
+    keyboard_hook = 0;
     return 1;
 }
 

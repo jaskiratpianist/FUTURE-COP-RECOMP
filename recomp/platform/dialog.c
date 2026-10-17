@@ -118,6 +118,10 @@ static struct Dialog dlg_stack[MAX_OPEN_DLGS];
 static int dlg_stack_depth = 0;
 
 static u16 draw_buf[1024 * 768];
+/* set when a notify static (a controller key box) was clicked: the game then waits for a key
+   through its keyboard hook, so the next key press goes to the game, not to dialog navigation */
+static int key_capture;
+
 static int cur_mouse_x = 0;
 static int cur_mouse_y = 0;
 
@@ -894,6 +898,7 @@ static void trigger_static_click(Cpu *c, struct Dialog *dlg, struct Control *ctr
 {
     if (!ctrl->enabled || !ctrl->visible) return;
     if (dlg->proc && (ctrl->style & 0x0100 /* SS_NOTIFY */)) {
+        key_capture = 1;
         u32 wp = (0 /* STN_CLICKED */ << 16) | (ctrl->id & 0xFFFF);
         u32 lp = ctrl->hwnd;
         if (dlg_log_enabled()) {
@@ -957,6 +962,10 @@ static int dlg_event_hook(const SDL_Event *e)
     if (dlg_stack_depth <= 0) return 0;
     struct Dialog *dlg = &dlg_stack[dlg_stack_depth - 1];
     if (!dlg->active) return 0;
+    if (key_capture && (e->type == SDL_KEYDOWN || e->type == SDL_KEYUP)) {
+        if (e->type == SDL_KEYUP) key_capture = 0;
+        return 0;
+    }
 
     switch (e->type) {
         case SDL_MOUSEMOTION: {

@@ -21,7 +21,9 @@ the Windows functions it imports are implemented in `recomp/platform/`. Read
 **Run the test command in the foreground and wait for its output. Never start it as a
 background task: your session ends while you wait for a background task.**
 
-**Already done** (by an earlier worker, keep it): item 2, the arrow-key aliases in
+**Already done** (by earlier workers, keep it): item 3's real gamepad support in dinput.c
+(SDL GameController devices exposed as DirectInput joysticks; still untested: add the
+virtual pad below and test it), and item 2, the arrow-key aliases in
 u32_misc.c (`key_aliases`, `bindings_use_arrow_keys` reading the binding tables at 0x511c20
 and 0x511ca0: verify those addresses are right while you work on item 1).
 
