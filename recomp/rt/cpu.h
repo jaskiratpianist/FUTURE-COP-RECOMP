@@ -77,6 +77,17 @@ void rt_trace(u32 a, u32 eax, u32 ecx, u32 edx, u32 ebx, u32 esp, u32 ebp, u32 e
 #define FIST64(x) (c->stx[STK(0)] ? c->sti[STK(0)] : rt_fist(c, (x)))
 #define FPOP() (c->top = (c->top + 1) & 7)
 
+/* A jump from one recompiled function into another is a tail call; it must not grow the host
+   stack, or loops that span functions (the software renderer's pixel loops) overflow it. */
+#if defined(__has_attribute)
+#if __has_attribute(musttail)
+#define TAILCALL(call) do { __attribute__((musttail)) return call; } while (0)
+#endif
+#endif
+#ifndef TAILCALL
+#define TAILCALL(call) do { call; return; } while (0)  /* older compilers: rely on -O2 sibling calls */
+#endif
+
 /* runtime (rt.c) */
 void dispatch(Cpu *c, u32 addr);                 /* call guest code at addr (return address pushed) */
 void rt_unimpl(Cpu *c, u32 addr, const char *what);
