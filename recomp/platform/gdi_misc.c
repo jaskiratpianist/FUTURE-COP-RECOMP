@@ -12,6 +12,7 @@
 #include "host.h"
 #include "win.h"
 #include "sound.h"
+#include "video.h"
 
 /* ========================================================================= */
 /* COMCTL32: Common Controls                                                 */
@@ -759,6 +760,7 @@ static u32 imp_CoUninitialize(Cpu *c)
 static u32 imp_CoCreateInstance(Cpu *c)
 {
     u32 rclsid = ARG(0);
+    u32 riid = ARG(3);
     u32 ppv = ARG(4);
 
     if (rclsid) {
@@ -769,6 +771,11 @@ static u32 imp_CoCreateInstance(Cpu *c)
         for (int i = 0; i < 8; i++) b[i] = rd8(rclsid + 8 + i);
         plat_log("CoCreateInstance CLSID: {%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x}",
                  d1, d2, d3, b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]);
+        if (d1 == 0xe436ebb3 && d2 == 0x524f && d3 == 0x11ce &&
+            b[0] == 0x9f && b[1] == 0x53 && b[2] == 0x00 && b[3] == 0x20 &&
+            b[4] == 0xaf && b[5] == 0x0b && b[6] == 0xa7 && b[7] == 0x70) {
+            return video_create_filter_graph(riid, ppv);
+        }
     }
     if (ppv) wr32(ppv, 0);
     return 0x80004002u; /* E_NOINTERFACE */

@@ -185,6 +185,17 @@ struct PlaySoundState {
 };
 static struct PlaySoundState g_playsound;
 
+/* Streaming audio for video playback */
+#define STREAM_BUF_FRAMES (65536)
+static int g_stream_active = 0;
+static int g_stream_rate = 44100;
+static int g_stream_channels = 2;
+static float g_stream_gain = 1.0f;
+static int16_t g_stream_ring[STREAM_BUF_FRAMES * 2];
+static u64 g_stream_write_frames = 0;
+static double g_stream_read_cursor = 0.0;
+static u64 g_stream_played_frames = 0;
+
 static inline void sound_lock(void)
 {
     pthread_mutex_lock(&g_sound_mutex);
@@ -435,6 +446,26 @@ static void audio_callback(void *userdata, Uint8 *stream, int len)
         }
     }
 
+    /* 3. Mix streaming video audio */
+    if (g_stream_active && g_stream_write_frames > (u64)g_stream_read_cursor) {
+        double step = (double)g_stream_rate / (double)g_device_freq;
+        for (int i = 0; i < num_samples; i++) {
+            u64 f0 = (u64)g_stream_read_cursor;
+            if (f0 >= g_stream_write_frames) break;
+            double frac = g_stream_read_cursor - (double)f0;
+            u32 idx0 = (u32)(f0 % STREAM_BUF_FRAMES);
+            u32 idx1 = (u32)((f0 + 1) % STREAM_BUF_FRAMES);
+            float l0 = (float)g_stream_ring[idx0 * 2 + 0];
+            float r0 = (float)g_stream_ring[idx0 * 2 + 1];
+            float l1 = (float)g_stream_ring[idx1 * 2 + 0];
+            float r1 = (float)g_stream_ring[idx1 * 2 + 1];
+            buf_l[i] += (l0 + (float)frac * (l1 - l0)) * g_stream_gain;
+            buf_r[i] += (r0 + (float)frac * (r1 - r0)) * g_stream_gain;
+            g_stream_read_cursor += step;
+            g_stream_played_frames++;
+        }
+    }
+
     sound_unlock();
 
     int16_t *out = (int16_t *)stream;
@@ -488,6 +519,94 @@ static void ensure_audio_device_opened(void)
     g_device_channels = obtained.channels;
     plat_log("audio device: %d Hz %d ch", obtained.freq, obtained.channels);
     SDL_PauseAudioDevice(g_audio_dev, 0);
+}
+
+int sound_stream_open(int rate, int channels)
+{
+    ensure_audio_device_opened();
+    sound_lock();
+    g_stream_rate = (rate > 0) ? rate : 44100;
+    g_stream_channels = (channels > 0) ? channels : 2;
+    g_stream_write_frames = 0;
+    g_stream_read_cursor = 0.0;
+    g_stream_played_frames = 0;
+    g_stream_gain = 1.0f;
+    g_stream_active = 1;
+    sound_unlock();
+    return 1;
+}
+
+int sound_stream_write(const s16 *samples, int frames)
+{
+    if (!samples || frames <= 0) return 0;
+    sound_lock();
+    if (!g_stream_active) {
+        sound_unlock();
+        return 0;
+    }
+    u64 read_pos = (u64)g_stream_read_cursor;
+    u32 buffered = (u32)(g_stream_write_frames - read_pos);
+    u32 space = (buffered < STREAM_BUF_FRAMES) ? (STREAM_BUF_FRAMES - buffered) : 0;
+    int to_write = (frames < (int)space) ? frames : (int)space;
+    for (int i = 0; i < to_write; i++) {
+        u32 idx = (u32)((g_stream_write_frames + i) % STREAM_BUF_FRAMES);
+        if (g_stream_channels == 1) {
+            s16 s = samples[i];
+            g_stream_ring[idx * 2 + 0] = s;
+            g_stream_ring[idx * 2 + 1] = s;
+        } else {
+            g_stream_ring[idx * 2 + 0] = samples[i * 2 + 0];
+            g_stream_ring[idx * 2 + 1] = samples[i * 2 + 1];
+        }
+    }
+    g_stream_write_frames += to_write;
+    sound_unlock();
+    return to_write;
+}
+
+void sound_stream_close(void)
+{
+    sound_lock();
+    g_stream_active = 0;
+    g_stream_write_frames = 0;
+    g_stream_read_cursor = 0.0;
+    sound_unlock();
+}
+
+double sound_stream_get_time(void)
+{
+    sound_lock();
+    double t = 0.0;
+    if (g_stream_active && g_stream_rate > 0) {
+        t = g_stream_read_cursor / (double)g_stream_rate;
+    }
+    sound_unlock();
+    return t;
+}
+
+int sound_stream_buffered_frames(void)
+{
+    sound_lock();
+    int b = 0;
+    if (g_stream_active) {
+        u64 r = (u64)g_stream_read_cursor;
+        if (g_stream_write_frames > r) {
+            b = (int)(g_stream_write_frames - r);
+        }
+    }
+    sound_unlock();
+    return b;
+}
+
+void sound_stream_set_volume(int vol_db_hundredths)
+{
+    sound_lock();
+    if (vol_db_hundredths <= -10000) {
+        g_stream_gain = 0.0f;
+    } else {
+        g_stream_gain = powf(10.0f, (float)vol_db_hundredths / 2000.0f);
+    }
+    sound_unlock();
 }
 
 /* RIFF/WAVE parser */

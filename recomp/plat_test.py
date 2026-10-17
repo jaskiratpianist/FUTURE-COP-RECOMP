@@ -18,6 +18,8 @@ ap.add_argument("--api", action="store_true", help="log every import call (FCOP_
 ap.add_argument("--lines", type=int, default=40)
 ap.add_argument("--input", help="scripted input (FCOP_INPUT), e.g. \"9000:click@156,306 12000:Escape\"")
 ap.add_argument("--png", help="save the last frame shown as this PNG (needs ffmpeg)")
+ap.add_argument("--videos", action="store_true", help="play the game's videos (default: skipped, so the menu "
+                "appears after about 8 s as the scripts assume)")
 ap.add_argument("--show", action="store_true", help="show the window (default: headless, nothing appears on screen)")
 ap.add_argument("--audio", help="record the game's sound output to this raw file (SDL disk audio driver) "
                 "and print its level per second")
@@ -36,6 +38,8 @@ if b.returncode:
 env = dict(os.environ, FCOP_TRACE_API="1") if a.api else dict(os.environ)
 if a.input:
     env["FCOP_INPUT"] = a.input
+if not a.videos:
+    env["FCOP_SKIP_VIDEOS"] = "1"
 if not a.show:
     env["SDL_VIDEODRIVER"] = "offscreen"  # no window on the desktop; frames still go to --png
 if a.audio:

@@ -33,6 +33,10 @@ u32  grealloc(u32 p, u32 size);
 u32  gstrdup(const char *s);
 void gstrcpy(u32 dst, const char *s, u32 max);  /* copy a host string into guest memory, NUL-terminated */
 
+/* events usable from host code (k32_sync.c): a handle the game can wait on */
+u32  sync_event_new(int manual, int initial);
+void sync_event_set(u32 h, int on);
+
 /* thunks: guest-callable addresses that run host code (imports, COM methods, GetProcAddress) */
 u32 thunk_new(const char *name, int nargs, ImpFn fn);
 

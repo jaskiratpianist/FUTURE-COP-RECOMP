@@ -615,6 +615,26 @@ static u32 imp_SetEvent(Cpu *c)
     return 1;
 }
 
+/* events for host code (DirectShow's media event): same objects as CreateEventA */
+u32 sync_event_new(int manual, int initial)
+{
+    GuestEvent *ev = (GuestEvent *)calloc(1, sizeof(GuestEvent));
+    if (!ev) return 0;
+    ev->manual_reset = manual ? 1 : 0;
+    ev->signaled = initial ? 1 : 0;
+    return handle_new(H_EVENT, ev);
+}
+
+void sync_event_set(u32 h, int on)
+{
+    GuestEvent *ev = (GuestEvent *)handle_get(h, H_EVENT);
+    if (!ev) return;
+    pthread_mutex_lock(&sync_lock);
+    ev->signaled = on ? 1 : 0;
+    if (on) pthread_cond_broadcast(&sync_cond);
+    pthread_mutex_unlock(&sync_lock);
+}
+
 /* BOOL ResetEvent(HANDLE hEvent) */
 static u32 imp_ResetEvent(Cpu *c)
 {
