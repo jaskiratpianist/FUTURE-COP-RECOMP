@@ -13,6 +13,7 @@
 #include "win.h"
 #include "sound.h"
 #include "video.h"
+#include "addons.h"
 
 /* ========================================================================= */
 /* COMCTL32: Common Controls                                                 */
@@ -701,6 +702,32 @@ static u32 imp_RegSetValueExA(Cpu *c)
     pthread_mutex_unlock(&reg_mutex);
 
     return 0; /* ERROR_SUCCESS */
+}
+
+int reg_host_get_dword(const char *key_path, const char *value, u32 *out)
+{
+    pthread_mutex_lock(&reg_mutex);
+    reg_load_locked();
+    RegValue *val = reg_find_value_locked(key_path, value);
+    if (!val || val->data_len < 4) {
+        pthread_mutex_unlock(&reg_mutex);
+        return 0;
+    }
+    if (out) {
+        memcpy(out, val->data, sizeof(u32));
+    }
+    pthread_mutex_unlock(&reg_mutex);
+    return 1;
+}
+
+void reg_host_set_dword(const char *key_path, const char *value, u32 v)
+{
+    pthread_mutex_lock(&reg_mutex);
+    reg_load_locked();
+    RegKey *key = reg_get_or_create_key_locked(key_path);
+    reg_set_value_locked(key, value, 4 /* REG_DWORD */, (const u8 *)&v, sizeof(u32));
+    reg_save_locked();
+    pthread_mutex_unlock(&reg_mutex);
 }
 
 /* BOOL GetUserNameA(LPSTR lpBuffer, LPDWORD pcbBuffer) */

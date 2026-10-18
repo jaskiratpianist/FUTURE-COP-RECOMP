@@ -178,6 +178,13 @@ own test run (`plat_test.py` is headless; `--png`, `--audio`, `--input`).
   video.c implements the DirectShow filter graph on pl_mpeg; `FCOP_SKIP_VIDEOS=1` skips
   them (plat_test.py does unless `--videos`, so the menu still appears after about 8 s).
 
+- Addons (addons.c): `addons/<Name>/textures/<x>_<y>_<w>_<h>_<fnv1a>.png` replaces page
+  rectangles when a mission file is opened (CreateFileA read-only -> patched copy in memory,
+  k32_file.c memory handles). Registry `UseAddons` (Preferences check box 0xF001, dialog.c),
+  `FCOP_ADDONS` overrides. The X1-Alpha is Cbmp id 9, rect 0,0,240,168 (5 variants across
+  missions). `tools/fcop_textures.py` dumps pages / exports regions. PNGs are box-scaled to
+  the original size until the OpenGL renderer can use them at full resolution.
+
 ## Next steps
 
 1. Done: menus, missions in both modes (incl. 2-player split screen), sound and music,
