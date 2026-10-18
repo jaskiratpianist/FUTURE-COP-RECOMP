@@ -12,7 +12,9 @@ A modern native port of Future Cop: L.A.P.D. (1998). Wanted, in order:
 2. A **native quit option** and a **preferences menu**: control remapping (input is
    currently unreliable), graphics settings, resolution.
 3. **High resolution** through the game's 3dfx Glide path reimplemented on OpenGL, then
-   **remastered assets** (textures by hash replacement, possibly the player robot model).
+   ~~remastered assets~~: **dropped by the user (2026-10-18)**, too risky with the old
+   textures. A working addon loader was built and reverted (commits ae8d924/316beec, kept in
+   history); don't bring it back unless asked.
 4. Later: Windows and **Android** builds.
 
 Only the code is ever shared; players supply their own game files. **Never commit
