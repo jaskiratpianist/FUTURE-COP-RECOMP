@@ -8,3 +8,5 @@ build/
 __pycache__/
 *.pyc
 /native_screenshots
+# addons: remastered assets are derived from the game, never committed
+/addons
