@@ -12,7 +12,6 @@
 #include "host.h"
 #include "dialog.h"
 #include "win.h"
-#include "addons.h"
 #include "third_party/font8x8_basic.h"
 
 #define DLG_HWND_BASE 0x00DA0000u
@@ -904,15 +903,6 @@ static void trigger_button_click(Cpu *c, struct Dialog *dlg, struct Control *ctr
         }
     }
 
-    if (dlg->res_id == 101 && (ctrl->id == 1001 || ctrl->id == 1)) {
-        struct Control *ac = find_ctrl_by_id(dlg, 0xF001);
-        if (ac) addons_set_enabled(ac->check_state);
-    }
-
-    if (ctrl->id == 0xF001) {
-        return;
-    }
-
     if (dlg->proc) {
         u32 wp = (0 /* BN_CLICKED */ << 16) | (ctrl->id & 0xFFFF);
         u32 lp = ctrl->hwnd;
@@ -1195,10 +1185,6 @@ static int dlg_event_hook(const SDL_Event *e)
                 }
                 if (dlg_log_enabled()) plat_log("dlg 0x%x notify WM_COMMAND: IDOK (1)", dlg->hwnd);
                 if (dlg->proc) {
-                    if (dlg->res_id == 101) {
-                        struct Control *ac = find_ctrl_by_id(dlg, 0xF001);
-                        if (ac) addons_set_enabled(ac->check_state);
-                    }
                     guest_call(cur_cpu, dlg->proc, 4, (u32[]){ dlg->hwnd, 0x0111, 1 /* IDOK */, 0 });
                 } else {
                     dlg->ended = 1;
@@ -2173,23 +2159,6 @@ static u32 imp_DialogBoxParamA(Cpu *c)
         return 1;
     }
 
-    if (dlg->res_id == 101 && dlg->num_controls < MAX_CONTROLS) {
-        struct Control *c = &dlg->controls[dlg->num_controls++];
-        memset(c, 0, sizeof(*c));
-        c->hwnd = dlg->hwnd + dlg->num_controls;
-        c->id = 0xF001;
-        c->type = CTRL_BUTTON;
-        c->btn_type = BTN_AUTOCHECK;
-        c->x = 156;
-        c->y = 49;
-        c->w = 113;
-        c->h = 9;
-        c->visible = 1;
-        c->enabled = 1;
-        c->check_state = addons_enabled();
-        strncpy(c->text, "Use Addons", sizeof(c->text) - 1);
-    }
-
     layout_dialog(dlg);
 
     dlg->focused_ctrl = -1;
@@ -2210,9 +2179,6 @@ static u32 imp_DialogBoxParamA(Cpu *c)
     /* Preferences (dialog 101): "Processor Select" only picks 1998 CPU-specific renderer loops,
        meaningless for recompiled code: hide it and keep it on AutoDetect (item 0) */
     if (dlg->res_id == 101) {
-        struct Control *addon = find_ctrl_by_id(dlg, 0xF001);
-        if (addon) addon->check_state = addons_enabled();
-
         struct Control *label = find_ctrl_by_id(dlg, 1111), *combo = find_ctrl_by_id(dlg, 1023);
         struct Control *ctl = find_ctrl_by_id(dlg, 1099), *audio = find_ctrl_by_id(dlg, 1100);
         if (label && combo && ctl && audio) {

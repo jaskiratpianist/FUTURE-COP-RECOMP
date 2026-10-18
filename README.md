@@ -97,18 +97,6 @@ has not been set up or tested. It is on the list below.
   mission starts; the menus always run at 640x480, as in the original. **Alt+Enter**
   switches between fullscreen and a window at any time; the window can be resized.
 
-### Addons (remastered textures)
-
-Replacement textures go in an `addons` folder **next to the repository's `game_files`**
-(or the current directory, or `FCOP_ADDONS_DIR`), never in the game folder:
-`addons/<AddonName>/textures/<x>_<y>_<w>_<h>_<hash>.png`. Each file replaces a rectangle of
-one of the game's 256x256 texture pages wherever its original pixels match `hash`, in every
-mission. Turn them on or off with **Preferences > Use Addons** (applies at the next
-mission). `tools/fcop_textures.py` lists and dumps the texture pages of a mission file and
-exports a region under the right name to start from. Until the OpenGL renderer exists,
-larger images are scaled down to the original size (colour and clean-up show, extra detail
-does not). Addons are made from the game's own art, so they are not part of this repository.
-
 Optional environment variables:
 
 | Variable | Effect |
@@ -116,7 +104,6 @@ Optional environment variables:
 | `FCOP_SKIP_VIDEOS=1` | Skip all videos (intro, briefings) |
 | `FCOP_WINDOW_H=<pixels>` | Starting window height (default: 3/4 of the screen) |
 | `FCOP_GAME_DIR=<folder>` | Where `FCopLAPD.exe` is |
-| `FCOP_ADDONS=0` / `1` | Override the Use Addons setting |
 
 ## How it works
 

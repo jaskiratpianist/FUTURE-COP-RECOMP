@@ -7,15 +7,6 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include "host.h"
-#include "addons.h"
-
-typedef struct FileHandle {
-    int is_mem;
-    int fd;
-    u8 *buf;
-    u32 size;
-    u32 pos;
-} FileHandle;
 
 #define GENERIC_READ    0x80000000u
 #define GENERIC_WRITE   0x40000000u
@@ -88,26 +79,6 @@ static u32 imp_CreateFileA(Cpu *c)
 
     int existed = (access(hpath, F_OK) == 0);
 
-    if (can_read && !can_write && disp == OPEN_EXISTING && existed) {
-        u32 plen = 0;
-        u8 *pbuf = addons_patch_file(hpath, &plen);
-        if (pbuf) {
-            FileHandle *fh = (FileHandle *)calloc(1, sizeof(FileHandle));
-            if (!fh) {
-                free(pbuf);
-                last_error = 8;
-                return INVALID_HANDLE_VALUE;
-            }
-            fh->is_mem = 1;
-            fh->buf = pbuf;
-            fh->size = plen;
-            fh->pos = 0;
-            fh->fd = -1;
-            last_error = ERROR_SUCCESS;
-            return handle_new(H_FILE, fh);
-        }
-    }
-
     switch (disp) {
     case CREATE_NEW:
         oflags |= O_CREAT | O_EXCL;
@@ -162,22 +133,13 @@ static u32 imp_CreateFileA(Cpu *c)
         fd = fd2;
     }
 
-    FileHandle *fh = (FileHandle *)calloc(1, sizeof(FileHandle));
-    if (!fh) {
-        close(fd);
-        last_error = 8;
-        return INVALID_HANDLE_VALUE;
-    }
-    fh->is_mem = 0;
-    fh->fd = fd;
-
     if (disp == CREATE_ALWAYS || disp == OPEN_ALWAYS) {
         last_error = existed ? ERROR_ALREADY_EXISTS : ERROR_SUCCESS;
     } else {
         last_error = ERROR_SUCCESS;
     }
 
-    return handle_new(H_FILE, fh);
+    return handle_new(H_FILE, (void *)(intptr_t)fd);
 }
 
 /* BOOL ReadFile(HANDLE, LPVOID, DWORD, LPDWORD, LPOVERLAPPED) */
@@ -188,18 +150,17 @@ static u32 imp_ReadFile(Cpu *c)
     u32 nToRead = ARG(2);
     u32 lpRead = ARG(3);
 
-    FileHandle *fh = NULL;
     int fd = -1;
     if (hFile == HSTD_INPUT) {
         fd = STDIN_FILENO;
     } else {
-        fh = (FileHandle *)handle_get(hFile, H_FILE);
-        if (!fh) {
+        void *p = handle_get(hFile, H_FILE);
+        if (!p) {
             last_error = ERROR_INVALID_HANDLE;
             if (lpRead) wr32(lpRead, 0);
             return 0;
         }
-        if (!fh->is_mem) fd = fh->fd;
+        fd = (int)(intptr_t)p;
     }
 
     if (nToRead == 0) {
@@ -212,18 +173,6 @@ static u32 imp_ReadFile(Cpu *c)
         last_error = ERROR_INVALID_PARAMETER;
         if (lpRead) wr32(lpRead, 0);
         return 0;
-    }
-
-    if (fh && fh->is_mem) {
-        u32 avail = (fh->pos < fh->size) ? (fh->size - fh->pos) : 0;
-        u32 total = (nToRead < avail) ? nToRead : avail;
-        if (total > 0) {
-            memcpy(G(lpBuffer), fh->buf + fh->pos, total);
-            fh->pos += total;
-        }
-        if (lpRead) wr32(lpRead, total);
-        last_error = ERROR_SUCCESS;
-        return 1;
     }
 
     u32 total = 0;
@@ -257,25 +206,19 @@ static u32 imp_WriteFile(Cpu *c)
     u32 nToWrite = ARG(2);
     u32 lpWritten = ARG(3);
 
-    FileHandle *fh = NULL;
     int fd = -1;
     if (hFile == HSTD_OUTPUT) {
         fd = STDOUT_FILENO;
     } else if (hFile == HSTD_ERROR) {
         fd = STDERR_FILENO;
     } else {
-        fh = (FileHandle *)handle_get(hFile, H_FILE);
-        if (!fh) {
+        void *p = handle_get(hFile, H_FILE);
+        if (!p) {
             last_error = ERROR_INVALID_HANDLE;
             if (lpWritten) wr32(lpWritten, 0);
             return 0;
         }
-        if (fh->is_mem) {
-            last_error = ERROR_ACCESS_DENIED;
-            if (lpWritten) wr32(lpWritten, 0);
-            return 0;
-        }
-        fd = fh->fd;
+        fd = (int)(intptr_t)p;
     }
 
     if (nToWrite == 0) {
@@ -321,11 +264,12 @@ static u32 imp_SetFilePointer(Cpu *c)
     u32 p_high = ARG(2);
     u32 method = ARG(3);
 
-    FileHandle *fh = (FileHandle *)handle_get(hFile, H_FILE);
-    if (!fh) {
+    void *p = handle_get(hFile, H_FILE);
+    if (!p) {
         last_error = ERROR_INVALID_HANDLE;
         return (u32)-1;
     }
+    int fd = (int)(intptr_t)p;
 
     s64 dist;
     if (p_high) {
@@ -335,30 +279,6 @@ static u32 imp_SetFilePointer(Cpu *c)
         dist = (s32)low_dist;
     }
 
-    if (fh->is_mem) {
-        s64 new_pos;
-        switch (method) {
-        case 0: new_pos = dist; break;
-        case 1: new_pos = (s64)fh->pos + dist; break;
-        case 2: new_pos = (s64)fh->size + dist; break;
-        default:
-            plat_log("warn: SetFilePointer unknown method %u", method);
-            last_error = ERROR_INVALID_PARAMETER;
-            return (u32)-1;
-        }
-        if (new_pos < 0) {
-            last_error = ERROR_NEGATIVE_SEEK;
-            return (u32)-1;
-        }
-        fh->pos = (u32)new_pos;
-        if (p_high) {
-            wr32(p_high, (u32)((u64)new_pos >> 32));
-        }
-        last_error = ERROR_SUCCESS;
-        return (u32)new_pos;
-    }
-
-    int fd = fh->fd;
     int whence;
     switch (method) {
     case 0: whence = SEEK_SET; break;
@@ -388,16 +308,12 @@ static u32 imp_SetFilePointer(Cpu *c)
 static u32 imp_SetEndOfFile(Cpu *c)
 {
     u32 hFile = ARG(0);
-    FileHandle *fh = (FileHandle *)handle_get(hFile, H_FILE);
-    if (!fh) {
+    void *p = handle_get(hFile, H_FILE);
+    if (!p) {
         last_error = ERROR_INVALID_HANDLE;
         return 0;
     }
-    if (fh->is_mem) {
-        last_error = ERROR_ACCESS_DENIED;
-        return 0;
-    }
-    int fd = fh->fd;
+    int fd = (int)(intptr_t)p;
 
     off_t cur = lseek(fd, 0, SEEK_CUR);
     if (cur == (off_t)-1) {
@@ -429,16 +345,12 @@ static u32 imp_FlushFileBuffers(Cpu *c)
         return 1;
     }
 
-    FileHandle *fh = (FileHandle *)handle_get(hFile, H_FILE);
-    if (!fh) {
+    void *p = handle_get(hFile, H_FILE);
+    if (!p) {
         last_error = ERROR_INVALID_HANDLE;
         return 0;
     }
-    if (fh->is_mem) {
-        last_error = ERROR_SUCCESS;
-        return 1;
-    }
-    int fd = fh->fd;
+    int fd = (int)(intptr_t)p;
 
     if (fsync(fd) != 0) {
         if (errno != EINVAL && errno != EROFS) {
@@ -464,49 +376,14 @@ static u32 imp_CloseHandle(Cpu *c)
         return 0;
     }
 
-    FileHandle *fh = (FileHandle *)handle_get(h, H_FILE);
-    if (fh) {
-        if (fh->is_mem) {
-            free(fh->buf);
-        } else {
-            close(fh->fd);
-        }
-        free(fh);
+    void *p = handle_get(h, H_FILE);
+    if (p) {
+        int fd = (int)(intptr_t)p;
+        close(fd);
     }
     handle_free(h);
     last_error = ERROR_SUCCESS;
     return 1;
-}
-
-/* DWORD GetFileSize(HANDLE, LPDWORD) */
-static u32 imp_GetFileSize(Cpu *c)
-{
-    u32 hFile = ARG(0);
-    u32 p_high = ARG(1);
-
-    FileHandle *fh = (FileHandle *)handle_get(hFile, H_FILE);
-    if (!fh) {
-        last_error = ERROR_INVALID_HANDLE;
-        return (u32)-1;
-    }
-
-    u64 sz = 0;
-    if (fh->is_mem) {
-        sz = fh->size;
-    } else {
-        struct stat st;
-        if (fstat(fh->fd, &st) < 0) {
-            last_error = ERROR_INVALID_HANDLE;
-            return (u32)-1;
-        }
-        sz = (u64)st.st_size;
-    }
-
-    if (p_high) {
-        wr32(p_high, (u32)(sz >> 32));
-    }
-    last_error = ERROR_SUCCESS;
-    return (u32)sz;
 }
 
 const struct ImpDef imp_k32_file[] = {
@@ -517,6 +394,5 @@ const struct ImpDef imp_k32_file[] = {
     IMPORT(SetEndOfFile, 1),
     IMPORT(FlushFileBuffers, 1),
     IMPORT(CloseHandle, 1),
-    IMPORT(GetFileSize, 2),
 };
 IMPORT_TABLE(k32_file);
