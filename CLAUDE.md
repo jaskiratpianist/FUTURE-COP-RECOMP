@@ -11,10 +11,11 @@ A modern native port of Future Cop: L.A.P.D. (1998). Wanted, in order:
 1. The game playable natively (Linux first) from recompiled code.
 2. A **native quit option** and a **preferences menu**: control remapping (input is
    currently unreliable), graphics settings, resolution.
-3. **High resolution** through the game's 3dfx Glide path reimplemented on OpenGL, then
-   ~~remastered assets~~: **dropped by the user (2026-10-18)**, too risky with the old
-   textures. A working addon loader was built and reverted (commits ae8d924/316beec, kept in
-   history); don't bring it back unless asked.
+3. ~~High resolution through a hardware renderer, remastered assets~~: **both dropped by the
+   user** (2026-10-18/19). The original software renderer is the target: it already does
+   every resolution up to 1600x1200. Tried and abandoned: an addon texture loader (reverted,
+   commits ae8d924/316beec) and the game's 3dfx Glide path on OpenGL (branch `opengl`: it
+   worked but broke some textures and effects). Don't revive them unless asked.
 4. Later: Windows and **Android** builds.
 
 Only the code is ever shared; players supply their own game files. **Never commit
@@ -189,20 +190,10 @@ own test run (`plat_test.py` is headless; `--png`, `--audio`, `--input`).
 2. Fix in-game crashes and rendering (expect more stub/offset bugs in Gemini's code;
    review ddraw.c, dsound.c, dinput.c against the DirectX 5 SDK layouts).
 3. Sound through dsound.c and SDL audio; music streaming uses the play/write cursors.
-4. Hardware 3D / high resolution. Findings (2026-10-17): the game draws 3D through EA's
-   **THRASH** driver interface: 34 `_THRASH_*` functions in a driver DLL named by the
-   registry value "Thrash Driver". The CD has them in `game_files/setup/thrash/` (voodooa,
-   voodoo2a (imports glide3x), d3da (Oct 1998, newest), **opengla** (THRASH on OpenGL,
-   loads opengl32 dynamically), softtria/softlina (software), ...), all based at 0x60000000
-   (free in our guest layout) with relocations. The installer copies one into the game
-   folder; ours has none and the game reads only `SoftwareRendering`, so it uses its built-in
-   software renderer and never calls LoadLibraryA for a driver; find what makes it choose
-   hardware (the `Group` value, display caps). The EXE also names the whole Glide 2 API.
-   Two routes: (A) recompile a driver DLL with x86c (needs multi-image support and function
-   discovery for DLLs) and forward opengl32 calls to host GL, scaling the viewport for any
-   resolution; (B) implement the 34 THRASH functions natively on OpenGL, using opengla.dll
-   as the reference for their semantics. B gives the cleanest high-res and texture
-   replacement path; decide with the user.
+4. Hardware rendering was explored and dropped (see Goal 3). Facts kept for reference: the
+   game picks its renderer from registry `Group` under HKLM\Software\Electronic Arts\Future
+   Cop: "Software" (default), "3Dfx" (loads glide2x.dll, Glide 2), anything else loads the
+   THRASH driver named by "Thrash Driver" + "a.dll" (DLLs in game_files/setup/thrash).
 5. Open: the pause bar shows black behind it (the game clears the screen), the 565
    Texture Coloring root cause, gamepads on real hardware, the game's own menu font instead
    of font8x8.

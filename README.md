@@ -125,7 +125,6 @@ Details and milestones: [docs/RECOMP_PLAN.md](docs/RECOMP_PLAN.md).
 - [x] Playable missions with keyboard, mouse and gamepad, sound, music and videos
 - [x] The game's dialogs (preferences, controller configuration, audio, pause, load/save, quit) redrawn in the game's style
 - [x] Resolutions up to 1600x1200, fullscreen, resizable window
-- [ ] OpenGL renderer (the game's 3D driver interface) for sharp high resolutions and texture replacement
 - [ ] Windows and Android builds
 
 ## Third-party code
