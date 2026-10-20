@@ -598,7 +598,7 @@ static u32 imp_dds_Blt(Cpu *c)
 
     /* Handle DDBLT_COLORFILL */
     if (dwFlags & DDBLT_COLORFILL) {
-        u32 fill_color = lpDDBltFx ? rd32(lpDDBltFx + 0x48) : 0;
+        u32 fill_color = lpDDBltFx ? rd32(lpDDBltFx + 0x50) : 0;  /* DDBLTFX.dwFillColor */
         int dx = 0, dy = 0, dw = (int)dest->width, dh = (int)dest->height;
         if (lpDestRect) {
             dx = (int)rd32(lpDestRect + 0);
@@ -1701,6 +1701,7 @@ static u32 imp_dd_Initialize(Cpu *c)
 /* 19 */
 static u32 imp_dd_RestoreDisplayMode(Cpu *c)
 {
+    dd_present_pending();  /* the last frame of the old mode */
     HostDDraw *dd = (HostDDraw *)com_host(ARG(0));
     if (dd && dd->mode_set) {
         dd->width = DESKTOP_W;
@@ -1715,6 +1716,7 @@ static u32 imp_dd_RestoreDisplayMode(Cpu *c)
 /* 20 */
 static u32 imp_dd_SetCooperativeLevel(Cpu *c)
 {
+    dd_present_pending();  /* the last frame of the old mode */
     HostDDraw *dd = (HostDDraw *)com_host(ARG(0));
     u32 hWnd = ARG(1);
     u32 dwFlags = ARG(2);
@@ -1740,6 +1742,7 @@ static u32 imp_dd_SetCooperativeLevel(Cpu *c)
 /* 21 */
 static u32 imp_dd_SetDisplayMode(Cpu *c)
 {
+    dd_present_pending();  /* the last frame of the old mode */
     HostDDraw *dd = (HostDDraw *)com_host(ARG(0));
     u32 width = ARG(1);
     u32 height = ARG(2);

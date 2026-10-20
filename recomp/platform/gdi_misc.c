@@ -452,12 +452,27 @@ static void reg_save_locked(void)
     reg_dirty = 0;
 }
 
+static void reg_read_file_locked(void);
+
 static void reg_load_locked(void)
 {
     if (reg_loaded) return;
     reg_loaded = 1;
     /* the game's installer creates its key; the game only opens it */
-    reg_get_or_create_key_locked("HKEY_LOCAL_MACHINE\\Software\\Electronic Arts\\Future Cop");
+    static const char key[] = "HKEY_LOCAL_MACHINE\\Software\\Electronic Arts\\Future Cop";
+    reg_get_or_create_key_locked(key);
+    reg_read_file_locked();
+    /* ... and "Install Dir", which the game puts in front of every file name. Without it the
+       game uses ".\\", and its BMP loader takes the extension after the first '.' in the path,
+       so it refused the legal screen and the mission loading pictures. host_path maps the
+       FCopLAPD folder to the game folder. */
+    static const char dir[] = "C:\\FCopLAPD";
+    if (!reg_find_value_locked(key, "Install Dir"))
+        reg_set_value_locked(reg_get_or_create_key_locked(key), "Install Dir", 1 /* REG_SZ */, (const u8 *)dir, sizeof dir);
+}
+
+static void reg_read_file_locked(void)
+{
     char reg_path[1200];
     snprintf(reg_path, sizeof(reg_path), "%s/registry.txt", user_dir);
     FILE *f = fopen(reg_path, "r");

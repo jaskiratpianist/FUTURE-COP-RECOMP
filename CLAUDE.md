@@ -182,6 +182,12 @@ own test run (`plat_test.py` is headless; `--png`, `--audio`, `--input`).
   (each present waits for vsync) flickered for most of a second, so ddraw.c only marks the primary
   changed and presents it on the game's next PeekMessage/GetMessage, on Flip, or after 50 ms
   (`dd_present_pending`).
+- Registry `Install Dir` (HKLM\...\Future Cop) is the folder the game puts in front of file
+  names; gdi_misc.c sets it to `C:\FCopLAPD` when missing. Without it the game used `.\`, and
+  its BMP loader (0x413f20) takes the extension after the *first* '.' (strchr), so the legal
+  screen and the mission loading pictures (Missions\Ld*.bmp) never loaded.
+- ddraw.c Blt colour fills read DDBLTFX.dwFillColor at 0x50 (Gemini had 0x48: a pink flash
+  before missions).
 - Pixel format: ddraw.c gives the game **555** by default. In 565 the software renderer's
   "Texture Coloring" (coloured lighting) comes out wrong (yellow/red floors with green
   specks; compare `FCOP_PIXFMT=565` with ColoringIsOff 0 and 1). Root cause not found yet:
