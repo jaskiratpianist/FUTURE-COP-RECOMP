@@ -248,6 +248,29 @@ static void present_surface(HostSurface *surf)
     }
 }
 
+/* Blits and locks on the primary surface are not shown one by one: the menu redraws itself
+   in ~50 blits straight onto the screen, which a 1998 PC finished within one refresh, but
+   each of our presents waits for vsync, so the half-drawn states flickered for most of a
+   second. The primary is shown when the game next checks its messages (dd_present_pending),
+   on Flip, or after 50 ms of drawing without a pause (loading screens). */
+static HostSurface *pending_primary;
+static u32 pending_since;
+
+void dd_present_pending(void)
+{
+    HostSurface *surf = pending_primary;
+    if (!surf) return;
+    pending_primary = NULL;
+    present_surface(surf);
+}
+
+static void primary_changed(HostSurface *surf)
+{
+    if (!pending_primary) pending_since = SDL_GetTicks();
+    pending_primary = surf;
+    if (SDL_GetTicks() - pending_since >= 50) dd_present_pending();
+}
+
 /* Helper to fill a DDSURFACEDESC at guest address lpDDSD */
 static void fill_surface_desc(HostSurface *surf, u32 desc_p)
 {
@@ -603,7 +626,7 @@ static u32 imp_dds_Blt(Cpu *c)
                 }
             }
         }
-        if (dest->is_primary) present_surface(dest);
+        if (dest->is_primary) primary_changed(dest);
         return DD_OK;
     }
 
@@ -701,7 +724,7 @@ static u32 imp_dds_Blt(Cpu *c)
         }
     }
 
-    if (dest->is_primary) present_surface(dest);
+    if (dest->is_primary) primary_changed(dest);
     return DD_OK;
 }
 
@@ -795,7 +818,7 @@ static u32 imp_dds_BltFast(Cpu *c)
         }
     }
 
-    if (dest->is_primary) present_surface(dest);
+    if (dest->is_primary) primary_changed(dest);
     return DD_OK;
 }
 
@@ -846,6 +869,7 @@ static u32 imp_dds_Flip(Cpu *c)
     back->pixels = tmp;
 
     /* Present new front buffer */
+    pending_primary = NULL;
     present_surface(surf);
     return DD_OK;
 }
@@ -1025,7 +1049,7 @@ static u32 imp_dds_ReleaseDC(Cpu *c)
     HostSurface *surf = (HostSurface *)com_host(ARG(0));
     u32 hDC = ARG(1);
     handle_free(hDC);
-    if (surf && surf->is_primary) present_surface(surf);
+    if (surf && surf->is_primary) primary_changed(surf);
     return DD_OK;
 }
 
@@ -1078,7 +1102,7 @@ static u32 imp_dds_SetPalette(Cpu *c)
     u32 lpPalette = ARG(1);
     if (surf) {
         surf->palette_obj = lpPalette;
-        if (surf->is_primary) present_surface(surf);
+        if (surf->is_primary) primary_changed(surf);
     }
     return DD_OK;
 }
@@ -1089,7 +1113,7 @@ static u32 imp_dds_Unlock(Cpu *c)
     HostSurface *surf = (HostSurface *)com_host(ARG(0));
     u32 lpSurfaceData = ARG(1);
     (void)lpSurfaceData;
-    if (surf && surf->is_primary) present_surface(surf);
+    if (surf && surf->is_primary) primary_changed(surf);
     return DD_OK;
 }
 

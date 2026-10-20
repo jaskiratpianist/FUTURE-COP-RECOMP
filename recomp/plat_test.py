@@ -54,7 +54,7 @@ if a.png:
         os.remove(os.path.join(shots, f))
     env["FCOP_SHOT"] = os.path.join(shots, "f%05d.ppm")
 try:
-    r = subprocess.run([os.path.join(ROOT, "build", "recomp", "fcop"), game_dir()],
+    r = subprocess.run([os.path.join(ROOT, "fcop"), game_dir()],
                        cwd=ROOT, capture_output=True, text=True, timeout=a.seconds, env=env)
     out, status = r.stdout + r.stderr, f"exited with {r.returncode}"
 except subprocess.TimeoutExpired as e:

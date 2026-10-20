@@ -66,12 +66,17 @@ extern __thread u32 last_error;
 /* the current thread's guest CPU, for host code that needs it (callbacks) */
 extern __thread Cpu *cur_cpu;
 
-/* game directory (argv[1]); host_path() maps a guest path like "C:\\FCOP\\x.dat" or
-   "missions\\a.mis" to a host path inside it, case-insensitively */
-extern char game_dir[];
+/* game directory (the folder holding FCopLAPD.exe); host_path() maps a guest path like
+   "C:\\FCOP\\x.dat" or "missions\\a.mis" to a host path inside it, case-insensitively.
+   user_dir holds what the player changes: settings, key bindings, saved games (setup.c) */
+extern char game_dir[], user_dir[];
 const char *host_path(const char *guest_path, char *buf, size_t n);
+int setup_paths(int argc, char **argv);  /* finds or installs the game files; 0 when ready */
 
 void plat_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+
+/* monotonic microseconds for the game's clock imports; sleeps briefly when a thread spins on it */
+u64 timer_now_us(void);
 
 /* per-DLL tables (kernel32.c, user32.c, ...) */
 extern const struct ImpDef imp_k32_proc[], imp_k32_mem[], imp_k32_file[], imp_k32_sync[], imp_u32_win[], imp_u32_misc[], imp_gdi32[], imp_advapi32[],

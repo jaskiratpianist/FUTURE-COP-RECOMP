@@ -57,16 +57,34 @@ class Func:
     def inside(self, a):
         return self.addr <= a < self.end
 
+    MERGE_MAX = 0x2000  # how far a function may grow by taking in the fragments it runs into
+
     def decode(self):
-        """Recursive descent from the entry, following branches and switch tables."""
-        todo = [self.entry]
+        """Recursive descent from the entry, following branches and switch tables. Code that
+        runs on past the end continues into the next function of data/functions.json: the
+        analysis cut some loops (the renderer's pixel loops) into fragments, and one C
+        function keeps the registers in locals instead of storing them at every hop."""
+        while True:
+            self.ins, self.tables, self.targets, self.calls = {}, {}, set(), set()
+            past = self.decode_from()
+            nxt = self.g.range_at(past) if past is not None else None
+            if nxt is None or nxt[1] - self.addr > self.MERGE_MAX:
+                if past is not None:  # needs an entry there
+                    self.targets.add(past)
+                return
+            self.end = nxt[1]
+            self.code = self.g.img.read(self.addr, self.end - self.addr + 16)
+
+    def decode_from(self):
+        """One pass; returns the address where code runs on past the end, if it does."""
+        todo, past = [self.entry], None
         while todo:
             pc = todo.pop()
             if not self.inside(pc):
                 continue
             while pc not in self.ins:
-                if not self.inside(pc):  # runs on past the end: needs an entry there
-                    self.targets.add(pc)
+                if not self.inside(pc):
+                    past = pc
                     break
                 i = next(md.disasm(self.code[pc - self.addr:pc - self.addr + 16], pc), None)
                 if i is None:
@@ -99,6 +117,7 @@ class Func:
                 elif m == "call" and op0.type == x86.X86_OP_IMM:
                     self.calls.add(op0.imm & 0xFFFFFFFF)
                 pc += i.size
+        return past
 
     def table(self, at, back):
         # MSVC's memcpy indexes some tables with negative values: take valid entries just before too
@@ -133,10 +152,17 @@ class Gen:
         self.unsupported = {}
         self.fns = {}  # entry -> Func
 
+    def range_at(self, a):
+        """The function of data/functions.json that holds address a, or None."""
+        import bisect
+        k = bisect.bisect_right(self.range_los, a) - 1
+        return self.ranges[k] if k >= 0 and a < self.ranges[k][1] else None
+
     def build(self):
         """Decode every function, then add extra entry points for every place that other
         code jumps or calls into the middle of, until nothing new turns up."""
         ranges = sorted((int(f["addr"], 16), int(f["addr"], 16) + f["size"], f["name"]) for f in self.funcs)
+        self.ranges, self.range_los = ranges, [r[0] for r in ranges]
         for lo, hi, name in ranges:
             self.fns[lo] = Func(self, lo, lo, hi, name)
         self.starts = set(self.fns)

@@ -768,6 +768,7 @@ static void render_all_dialogs(void)
 {
     const u16 *px = NULL;
     int scr_w = 640, scr_h = 480, is565 = 1;
+    dd_present_pending();
     win_last_frame(&px, &scr_w, &scr_h, &is565);
     if (scr_w <= 0 || scr_h <= 0) { scr_w = 640; scr_h = 480; is565 = 1; }
 
@@ -1549,6 +1550,7 @@ static void layout_dialog(struct Dialog *dlg)
 {
     const u16 *px = NULL;
     int scr_w = 640, scr_h = 480, is565 = 1;
+    dd_present_pending();
     win_last_frame(&px, &scr_w, &scr_h, &is565);
     if (scr_w <= 0 || scr_h <= 0) { scr_w = 640; scr_h = 480; is565 = 1; }
 
@@ -2069,6 +2071,7 @@ static u32 imp_MessageBoxA(Cpu *c)
 
     const u16 *px = NULL;
     int scr_w = 640, scr_h = 480, is565 = 1;
+    dd_present_pending();
     win_last_frame(&px, &scr_w, &scr_h, &is565);
     if (scr_w <= 0 || scr_h <= 0) { scr_w = 640; scr_h = 480; is565 = 1; }
 

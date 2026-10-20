@@ -19,17 +19,15 @@ never committed.
 
 ### 1. Install the tools
 
-You need gcc, the SDL2 development files and Python 3. **gcc 15 or newer** is recommended
-(it guarantees the tail calls the translated code relies on; with an older gcc, build with
-`OPT=-O2 ./recomp/build.sh` instead).
+You need gcc, CMake, curl, Python 3, and the SDL2 development package (it brings in the
+X11, Wayland and audio headers that the built-in SDL2 is compiled against). **gcc 15 or
+newer** is recommended (it guarantees the tail calls the translated code relies on).
 
 | Distribution | Command |
 |---|---|
-| Ubuntu / Debian | `sudo apt install build-essential libsdl2-dev python3 python3-venv` |
-| Fedora | `sudo dnf install gcc SDL2-devel python3` |
-| Arch | `sudo pacman -S gcc sdl2 python` |
-
-`ffmpeg` is optional (only the test tool uses it, to save screenshots).
+| Ubuntu / Debian | `sudo apt install build-essential cmake curl libsdl2-dev python3 python3-venv` |
+| Fedora | `sudo dnf install gcc cmake curl SDL2-devel python3` |
+| Arch | `sudo pacman -S gcc cmake curl sdl2 python` |
 
 ### 2. Get the code and the Python packages
 
@@ -42,23 +40,12 @@ python3 -m venv .venv
 
 ### 3. Copy the game files
 
-Copy **the whole CD** into `game_files/`, keeping its folders. You should end up with:
+The build translates your own `FCopLAPD.exe`, so it needs the game files: copy the CD (at
+least its `FCopLAPD` and `Video` folders) into `game_files/`. From a CD image, for example:
 
+```sh
+7z x -ogame_files "/path/to/Future Cop.iso" FCopLAPD Video
 ```
-game_files/
-  FCopLAPD/
-    FCopLAPD.exe
-    febmp.bin
-    missions/
-  Video/          intro, briefing and help videos
-  MISSIONS/
-  setup/
-  ...
-```
-
-The game folder is the one that contains `FCopLAPD.exe` (it is found automatically under
-`game_files/`; you can also point to it with `FCOP_GAME_DIR=/path/to/folder`). The `Video`
-folder must sit next to it, as on the CD.
 
 ### 4. Build
 
@@ -66,19 +53,32 @@ folder must sit next to it, as on the CD.
 ./recomp/build.sh
 ```
 
-The first build translates the EXE into C and compiles it (about a minute on a
-multi-core machine); later builds only recompile what changed. The result is
-`build/recomp/fcop`.
+The first build downloads SDL2's source and builds it as a static library (about 30
+seconds), then translates the EXE into C and compiles it (about 20 seconds on a multi-core
+machine). Later builds only recompile what changed. The result is **`./fcop`**: one
+executable that needs nothing but the C library, so it runs on other Linux systems without
+installing SDL2. (`SYSTEM_SDL=1 ./recomp/build.sh` links the system's SDL2 instead;
+`DEBUG=1` keeps debug information.)
 
 ### 5. Play
 
-```sh
-build/recomp/fcop game_files/FCopLAPD
+Put `fcop` in any folder and start it. It keeps everything next to itself:
+
+```
+fcop
+game_files/     the files from your CD (only FCopLAPD/ and Video/ are needed)
+user_info/      your settings, key bindings and saved games
 ```
 
-Your settings, key bindings and saved games are stored in the game folder
-(`registry.txt`, `controls.txt`, `save.cfg`), as the original stored them in the Windows
-registry and its install folder.
+On the first start, when `game_files/` is empty, the game installs itself from your CD
+image: it uses an image (`.iso`, or `.bin` + `.cue`) lying next to `fcop`, one given on the
+command line (`./fcop "Future Cop.iso"`), or asks you to pick one (with the desktop's file
+chooser, zenity or kdialog). It copies the 360 MB the game needs and never asks again. You
+can also copy the whole CD into `game_files/` yourself.
+
+If `fcop`'s folder is read-only, `user_info` goes to `~/.local/share/Electronic Arts/Future Cop/`
+instead. Settings from older versions (`registry.txt`, `controls.txt`, `save.cfg` in the game
+folder) are copied into `user_info/` on the first start.
 
 ## Windows
 
@@ -103,7 +103,7 @@ Optional environment variables:
 |---|---|
 | `FCOP_SKIP_VIDEOS=1` | Skip all videos (intro, briefings) |
 | `FCOP_WINDOW_H=<pixels>` | Starting window height (default: 3/4 of the screen) |
-| `FCOP_GAME_DIR=<folder>` | Where `FCopLAPD.exe` is |
+| `FCOP_GAME_DIR=<folder>` | Use the game files in this folder instead of `game_files/` (same as giving the folder on the command line) |
 
 ## How it works
 
@@ -120,11 +120,12 @@ Details and milestones: [docs/RECOMP_PLAN.md](docs/RECOMP_PLAN.md).
 
 ## Status
 
-- [x] Whole EXE recompiles and links; 1,588 functions verified identical to the original in differential tests
+- [x] Whole EXE recompiles and links; 1,586 functions verified identical to the original in differential tests
 - [x] All 200 imported Windows functions have an implementation
 - [x] Playable missions with keyboard, mouse and gamepad, sound, music and videos
 - [x] The game's dialogs (preferences, controller configuration, audio, pause, load/save, quit) redrawn in the game's style
 - [x] Resolutions up to 1600x1200, fullscreen, resizable window
+- [x] One self-contained executable that installs the game files from the CD image
 - [ ] Windows and Android builds
 
 ## Third-party code

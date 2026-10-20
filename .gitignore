@@ -4,7 +4,10 @@ game_files/*
 
 # build output, including the C generated from the retail EXE (derived from copyrighted code)
 build/
+/fcop
 .venv/
 __pycache__/
 *.pyc
-/native_screenshots
+
+# the player's settings, key bindings and saved games
+/user_info/

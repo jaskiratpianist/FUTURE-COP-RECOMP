@@ -46,9 +46,11 @@ recomp/rt/rt.c        dispatch (address -> function), x87 helpers, cpuid/rdtsc/i
 recomp/rt/harness.c   test harness for difftest (demand-paged memory, traces)
 recomp/difftest.py    Unicorn vs recompiled C differential tests
 recomp/platform/      Win32/DirectX on SDL2: core.c (memory, thunks, handles, COM, loader, main),
+                      setup.c (game_files/ and user_info/ next to the executable; first-start
+                      install from the CD image with its own ISO 9660/Joliet reader),
                       host.h (rules for import code), win.h (shared window/input state),
                       k32_*.c u32_*.c gdi_misc.c ddraw.c dinput.c dsound.c
-recomp/build.sh       generate + compile + link -> build/recomp/fcop
+recomp/build.sh       SDL2 (downloaded once, static) + generate + compile + link -> ./fcop
 recomp/plat_test.py   build and run the game briefly, print the log tail (the one command Gemini may run)
 recomp/plat_agy.py    hand one platform file to a Gemini worker (assignments are in this file)
 recomp/paths.py       finds FCopLAPD.exe under game_files/ (or $FCOP_GAME_DIR)
@@ -59,7 +61,10 @@ docs/RECOMP_PLAN.md   design and milestones; docs/PLATFORM_TASK.md is the Gemini
 ```
 
 Setup: `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`, SDL2 dev
-package installed. Build: `./recomp/build.sh`; run: `build/recomp/fcop <game dir>`.
+package and cmake installed. Build: `./recomp/build.sh` (`DEBUG=1` for gdb, `SYSTEM_SDL=1` to
+skip the static SDL2); run: `./fcop`. The executable is self-contained (only libc): it finds
+`game_files/` and `user_info/` next to itself (SDL_GetBasePath); a folder given as argv[1] or
+`FCOP_GAME_DIR` overrides game_files (plat_test.py does that), an image file as argv[1] installs it.
 
 ## How the recompiled code works
 
@@ -100,7 +105,8 @@ package installed. Build: `./recomp/build.sh`; run: `build/recomp/fcop <game dir
   C disagree (builds a traced library with `-DRECOMP_TRACE`). Known, expected failures:
   0x45b1c0 (cpuid), 0x4742e0 (rdtsc), 0x47c070 (FPU exception flags), 0x4764d0 (`in`
   on garbage input), 0x4532f0 (page-count difference), 0x45b6db (`fist` at 0x45bb30 on
-  random FPU values; not yet checked whether it matters).
+  random FPU values; not yet checked whether it matters), 0x402800 and 0x402830 (a data
+  table of `04 04 ...` that functions.json calls code; they run into each other).
 - Environment switches for the game: `FCOP_TRACE_API=1` (every import call with its
   caller), `FCOP_TRACE_MSG=1` (window messages), `FCOP_DD_LOG=1` (DirectDraw blits),
   `FCOP_SHOT=build/shots/f%04d.ppm` (dump every presented frame; convert to PNG to look;
@@ -157,12 +163,13 @@ own test run (`plat_test.py` is headless; `--png`, `--audio`, `--input`).
   (dialog.h). `FCOP_DLG_LOG=1` logs every dialog message. The game ignores IDCANCEL in most
   dialogs, so Esc presses a "Cancel"/"Resume..." button. `build/dialogs.txt` (made by a
   throwaway decoder, not committed) lists every control.
-- Settings live in our registry (`registry.txt` in the game folder) under
+- Settings live in our registry (`user_info/registry.txt`) under
   HKLM\Software\Electronic Arts\Future Cop\Settings (Resolution = list index, FullScreen,
   volumes...). The installer used to create the key; gdi_misc.c creates it now. The game saves
   them **when it exits normally** (plat_test's kill skips that: quit with
   `click@156,306` + `Return` in the input script). `FCOP_TRACE_REG=1` logs registry calls.
-- Key bindings: `controls.txt` in the game folder, written **as soon as Controller
+- Key bindings: `user_info/controls.txt` (host_path redirects the game's `controls.txt` and
+  `save.cfg` there), written **as soon as Controller
   Configuration closes with OK** (tests that rebind keys change the player's real bindings:
   back the file up and restore it). In memory: 14 (device, key) pairs per player at
   0x511c20 / 0x511ca0, actions 0..3 forward, back, right, left; the arrow keys press
@@ -171,6 +178,10 @@ own test run (`plat_test.py` is headless; `--png`, `--audio`, `--input`).
   Windowed, DirectDraw's primary surface is the whole desktop (we report DESKTOP_W x DESKTOP_H,
   1600x1200, win.h) and only the main window's rectangle is shown. Fullscreen comes from
   SetCooperativeLevel (SDL fullscreen-desktop, letterboxed); Alt+Enter toggles it.
+- Presenting: the menu redraws in ~50 blits straight onto the primary surface. Showing each one
+  (each present waits for vsync) flickered for most of a second, so ddraw.c only marks the primary
+  changed and presents it on the game's next PeekMessage/GetMessage, on Flip, or after 50 ms
+  (`dd_present_pending`).
 - Pixel format: ddraw.c gives the game **555** by default. In 565 the software renderer's
   "Texture Coloring" (coloured lighting) comes out wrong (yellow/red floors with green
   specks; compare `FCOP_PIXFMT=565` with ColoringIsOff 0 and 1). Root cause not found yet:
@@ -180,6 +191,21 @@ own test run (`plat_test.py` is headless; `--png`, `--audio`, `--input`).
   files in the CD's `Video` folder (host_path falls back to the parent of the game folder).
   video.c implements the DirectShow filter graph on pl_mpeg; `FCOP_SKIP_VIDEOS=1` skips
   them (plat_test.py does unless `--videos`, so the menu still appears after about 8 s).
+
+## Performance (measured 2026-10-19, mission at 1280x960, game capped at 37 fps)
+
+The main thread went from 100% of a core to about 37%:
+- The game waits for frames by polling QueryPerformanceCounter / timeGetTime in a tight loop:
+  `timer_now_us()` (k32_sync.c) sleeps 0.3 ms once a thread has read the clock 64 times in a
+  row with < 200 us between reads. Menu idle: ~5%.
+- 16-bit frames are converted to ARGB8888 through a 64K-entry table in `win_show` (SDL's own
+  555 -> 8888 conversion, BlitNtoN, was 22% of the CPU).
+- x86c merges functions.json fragments that code falls through into (the renderer's pixel
+  loops were split mid-loop, storing all registers at every hop); fall-through tail calls
+  went from 107 to 19.
+- What remains is the game's own per-pixel texture loop (0x45bbbe-0x45bbf0 in F_45b6db, ~30%).
+  -O1, -O2 and -O3 measure the same; release builds use -O2. `perf` is blocked on this machine
+  (perf_event_paranoid 4): a SIGPROF sampler preloaded with LD_PRELOAD works instead.
 
 ## Next steps
 

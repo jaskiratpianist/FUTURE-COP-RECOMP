@@ -346,6 +346,30 @@ static u32 imp_QueryPerformanceFrequency(Cpu *c)
     return 1;
 }
 
+/* The game waits for its next frame by reading the clock in a tight loop, which kept a CPU
+   core at 100%. A thread that reads it many times in a row, each soon after the last
+   of the last, is spinning: let it sleep a little instead (the wait still ends on time,
+   at most about half a millisecond late). */
+u64 timer_now_us(void)
+{
+    static __thread u64 last;
+    static __thread int streak;
+    struct timespec ts;
+    u64 us;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    us = (u64)ts.tv_sec * 1000000ull + (u64)ts.tv_nsec / 1000ull;
+    streak = us - last < 200 ? streak + 1 : 0;
+    last = us;
+    if (streak > 64) {
+        struct timespec req = {0, 300000};
+        nanosleep(&req, NULL);
+        clock_gettime(CLOCK_MONOTONIC, &ts);
+        us = (u64)ts.tv_sec * 1000000ull + (u64)ts.tv_nsec / 1000ull;
+        last = us;
+    }
+    return us;
+}
+
 /* BOOL QueryPerformanceCounter(LARGE_INTEGER *lpPerformanceCount) */
 static u32 imp_QueryPerformanceCounter(Cpu *c)
 {
@@ -354,9 +378,7 @@ static u32 imp_QueryPerformanceCounter(Cpu *c)
         last_error = 87;
         return 0;
     }
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    u64 us = (u64)ts.tv_sec * 1000000ull + (u64)ts.tv_nsec / 1000ull;
+    u64 us = timer_now_us();
     wr32(out, (u32)us);
     wr32(out + 4, (u32)(us >> 32));
     return 1;
@@ -366,10 +388,7 @@ static u32 imp_QueryPerformanceCounter(Cpu *c)
 static u32 imp_GetTickCount(Cpu *c)
 {
     (void)c;
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    u64 ms = (u64)ts.tv_sec * 1000ull + (u64)ts.tv_nsec / 1000000ull;
-    return (u32)ms;
+    return (u32)(timer_now_us() / 1000u);
 }
 
 /* HANDLE CreateThread(LPSECURITY_ATTRIBUTES lpThreadAttributes, SIZE_T dwStackSize,

@@ -424,7 +424,7 @@ static RegValue *reg_find_value_locked(const char *kpath, const char *vname)
 static void reg_save_locked(void)
 {
     char reg_path[1200];
-    snprintf(reg_path, sizeof(reg_path), "%s/registry.txt", game_dir);
+    snprintf(reg_path, sizeof(reg_path), "%s/registry.txt", user_dir);
     FILE *f = fopen(reg_path, "w");
     if (!f) return;
     for (int i = 0; i < reg_keys_count; i++) {
@@ -459,7 +459,7 @@ static void reg_load_locked(void)
     /* the game's installer creates its key; the game only opens it */
     reg_get_or_create_key_locked("HKEY_LOCAL_MACHINE\\Software\\Electronic Arts\\Future Cop");
     char reg_path[1200];
-    snprintf(reg_path, sizeof(reg_path), "%s/registry.txt", game_dir);
+    snprintf(reg_path, sizeof(reg_path), "%s/registry.txt", user_dir);
     FILE *f = fopen(reg_path, "r");
     if (!f) return;
     char line[8192];
@@ -815,19 +815,12 @@ static TimerEvent *timers[MAX_TIMERS];
 static pthread_mutex_t timers_lock = PTHREAD_MUTEX_INITIALIZER;
 static u32 next_timer_id = 1;
 
-static struct timespec winmm_start_time;
-static int winmm_start_init = 0;
-
 static u32 winmm_time_ms(void)
 {
-    struct timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-    if (!winmm_start_init) {
-        winmm_start_time = ts;
-        winmm_start_init = 1;
-    }
-    u64 ms = (u64)(ts.tv_sec - winmm_start_time.tv_sec) * 1000 + (ts.tv_nsec - winmm_start_time.tv_nsec) / 1000000;
-    return (u32)ms;
+    static u64 start;
+    u64 us = timer_now_us();
+    if (!start) start = us;
+    return (u32)((us - start) / 1000u);
 }
 
 /* BOOL PlaySoundA(LPCSTR pszSound, HMODULE hmod, DWORD fdwSound) */

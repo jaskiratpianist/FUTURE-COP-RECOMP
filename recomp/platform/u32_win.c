@@ -958,6 +958,7 @@ static void shot(const void *pixels, int w, int h, int pitch, int bits, u32 gmas
     int x, y;
     n++;
     char name[512];
+    if (getenv("FCOP_SHOT_LOG")) plat_log("frame %d presented (%dx%d)", n, w, h);
     if (!path || bits != 16) return;
     snprintf(name, sizeof name, path, n);  /* path may contain %d for the frame number */
     if (!(f = fopen(name, "wb"))) return;
@@ -971,7 +972,6 @@ static void shot(const void *pixels, int w, int h, int pitch, int bits, u32 gmas
             fwrite(rgb, 1, 3, f);
         }
     fclose(f);
-    if (getenv("FCOP_SHOT_LOG")) plat_log("frame %d presented (%dx%d)", n, w, h);
 }
 
 /* the last frame the game presented (16-bit only), for dialogs drawn over it */
@@ -1033,6 +1033,31 @@ void win_present(const void *pixels, int w, int h, int pitch_bytes, int bits, u3
     win_show(pixels, w, h, pitch_bytes, bits, rmask, gmask, bmask);
 }
 
+/* 16-bit frames are turned into 32-bit ones through a table, here: renderers do not take
+   555/565 textures, and SDL's own conversion took a fifth of the game's CPU time */
+static u32 px_table[65536], px_table_masks[3];
+
+static u32 px_channel(u32 p, u32 mask)
+{
+    int shift = 0, bits = 0;
+    u32 v;
+    if (!mask) return 0;
+    while (!(mask >> shift & 1)) shift++;
+    while (mask >> (shift + bits) & 1) bits++;
+    v = (p & mask) >> shift;
+    return bits >= 8 ? v >> (bits - 8) : (v << (8 - bits)) | (v >> (2 * bits - 8 > 0 ? 2 * bits - 8 : 0));
+}
+
+static void px_table_for(u32 rmask, u32 gmask, u32 bmask)
+{
+    if (px_table_masks[0] == rmask && px_table_masks[1] == gmask && px_table_masks[2] == bmask) return;
+    for (u32 p = 0; p < 65536; p++)
+        px_table[p] = 0xff000000u | px_channel(p, rmask) << 16 | px_channel(p, gmask) << 8 | px_channel(p, bmask);
+    px_table_masks[0] = rmask;
+    px_table_masks[1] = gmask;
+    px_table_masks[2] = bmask;
+}
+
 void win_show(const void *pixels, int w, int h, int pitch_bytes, int bits, u32 rmask, u32 gmask, u32 bmask)
 {
     shot(pixels, w, h, pitch_bytes, bits, gmask);
@@ -1067,13 +1092,9 @@ void win_show(const void *pixels, int w, int h, int pitch_bytes, int bits, u32 r
     }
 
     /* Determine SDL pixel format */
-    Uint32 format = SDL_PIXELFORMAT_RGB565;
+    Uint32 format = SDL_PIXELFORMAT_ARGB8888;
     if (bits == 16) {
-        if (gmask == 0x07e0) {
-            format = (rmask == 0xf800) ? SDL_PIXELFORMAT_RGB565 : SDL_PIXELFORMAT_BGR565;
-        } else if (gmask == 0x03e0) {
-            format = (rmask == 0x7c00) ? SDL_PIXELFORMAT_RGB555 : SDL_PIXELFORMAT_BGR555;
-        }
+        px_table_for(rmask, gmask, bmask);
     } else if (bits == 32) {
         if (rmask == 0x00ff0000) format = SDL_PIXELFORMAT_ARGB8888;
         else if (rmask == 0x000000ff) format = SDL_PIXELFORMAT_ABGR8888;
@@ -1104,7 +1125,19 @@ void win_show(const void *pixels, int w, int h, int pitch_bytes, int bits, u32 r
         SDL_RenderSetLogicalSize(win_int->renderer, w, h);  /* mouse events arrive in game pixels */
         win_int->logical_set = 1;
     }
-    SDL_UpdateTexture(win_int->texture, NULL, pixels, pitch_bytes);
+    if (bits == 16) {
+        void *tp;
+        int tpitch;
+        if (SDL_LockTexture(win_int->texture, NULL, &tp, &tpitch)) return;
+        for (int y = 0; y < h; y++) {
+            const u16 *src = (const u16 *)((const u8 *)pixels + (size_t)y * pitch_bytes);
+            u32 *dst = (u32 *)((u8 *)tp + (size_t)y * tpitch);
+            for (int x = 0; x < w; x++) dst[x] = px_table[src[x]];
+        }
+        SDL_UnlockTexture(win_int->texture);
+    } else {
+        SDL_UpdateTexture(win_int->texture, NULL, pixels, pitch_bytes);
+    }
     SDL_RenderClear(win_int->renderer);
     SDL_RenderCopy(win_int->renderer, win_int->texture, NULL, NULL);
     SDL_RenderPresent(win_int->renderer);
@@ -1319,7 +1352,6 @@ static u32 imp_DefWindowProcA(Cpu *c)
 
     switch (msg) {
         case WM_CLOSE: {
-            u32 args[1] = { hwnd };
             c->r[4] -= 8;
             wr32(c->r[4] + 4, hwnd);
             imp_DestroyWindow(c);
@@ -1643,6 +1675,7 @@ static u32 imp_PeekMessageA(Cpu *c)
     u32 max = ARG(3);
     u32 remove = ARG(4) & 1;
 
+    dd_present_pending();
     plat_pump();
 
     struct Msg m;
@@ -1670,6 +1703,7 @@ static u32 imp_GetMessageA(Cpu *c)
     u32 max = ARG(3);
 
     struct Msg m;
+    dd_present_pending();
     while (1) {
         plat_pump();
         if (msg_peek(&m, hwnd, min, max, 1)) {

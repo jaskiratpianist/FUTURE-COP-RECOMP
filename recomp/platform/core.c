@@ -165,12 +165,14 @@ void rt_yield(Cpu *c)
 /* guest code called an address that is not recompiled code */
 void rt_foreign(Cpu *c, u32 addr)
 {
+    static int trace = -1;
     u32 k = (addr - THUNK_LO) / 4, r;
+    if (trace < 0) trace = getenv("FCOP_TRACE_API") != NULL;
     if (addr < THUNK_LO || k >= thunk_n) {
         plat_log("call to unknown address 0x%08x (esp 0x%08x, return 0x%08x)", addr, c->r[4], rd32(c->r[4]));
         abort();
     }
-    if (getenv("FCOP_TRACE_API")) plat_log("api %s from 0x%08x", thunks[k].name, rd32(c->r[4]));
+    if (trace) plat_log("api %s from 0x%08x", thunks[k].name, rd32(c->r[4]));
     if (thunks[k].fn == missing_stub) {
         plat_log("unimplemented import %s (called from 0x%08x)", thunks[k].name, rd32(c->r[4]));
         abort();
@@ -297,7 +299,15 @@ static const char *host_path_in(const char *root, const char *gp, char *buf, siz
 const char *host_path(const char *gp, char *buf, size_t n)
 {
     char cd_root[1024], alt[1024], *slash;
+    size_t len = strlen(game_dir);
     host_path_in(game_dir, gp, buf, n);
+    /* what the game writes into its folder (key bindings, saved games) is kept in user_info/ */
+    if (!strncmp(buf, game_dir, len) && buf[len] == '/' && !strchr(buf + len + 1, '/') &&
+        (!strcasecmp(buf + len + 1, "controls.txt") || !strcasecmp(buf + len + 1, "save.cfg"))) {
+        snprintf(alt, sizeof alt, "%s/%s", user_dir, buf + len + 1);
+        snprintf(buf, n, "%s", alt);
+        return buf;
+    }
     if (access(buf, F_OK) == 0) return buf;
     snprintf(cd_root, sizeof cd_root, "%s", game_dir);
     if (!(slash = strrchr(cd_root, '/')) || slash == cd_root) return buf;
@@ -344,7 +354,7 @@ static const struct ImpDef *find_import(const char *dll, const char *name)
     static const struct { const char *dll; const struct ImpDef *t; const int *n; } dlls[] = {
         {"KERNEL32.dll", imp_k32_proc, &imp_k32_proc_n}, {"KERNEL32.dll", imp_k32_mem, &imp_k32_mem_n},
         {"KERNEL32.dll", imp_k32_file, &imp_k32_file_n}, {"KERNEL32.dll", imp_k32_sync, &imp_k32_sync_n},
-        {"USER32.dll", imp_dialog, &imp_dialog_n},  /* first: replaces u32_misc's placeholder dialogs */
+        {"USER32.dll", imp_dialog, &imp_dialog_n},
         {"USER32.dll", imp_u32_win, &imp_u32_win_n}, {"USER32.dll", imp_u32_misc, &imp_u32_misc_n},
         {"GDI32.dll", imp_gdi32, &imp_gdi32_n}, {"ADVAPI32.dll", imp_advapi32, &imp_advapi32_n},
         {"ole32.dll", imp_ole32, &imp_ole32_n}, {"WINMM.dll", imp_winmm, &imp_winmm_n},
@@ -403,11 +413,7 @@ int main(int argc, char **argv)
     char exe[1200];
     unsigned k;
     int missing = 0;
-    if (argc < 2) {
-        fprintf(stderr, "usage: %s <folder containing FCopLAPD.exe>\n", argv[0]);
-        return 2;
-    }
-    snprintf(game_dir, sizeof game_dir, "%s", argv[1]);
+    if (setup_paths(argc, argv)) return 1;
     MEM = mmap(NULL, 1ull << 32, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
     if (MEM == MAP_FAILED) { perror("mmap 4GB"); return 1; }
     map(TIB_ADDR, TIB_ADDR + 0x1000);

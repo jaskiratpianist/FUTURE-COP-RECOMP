@@ -40,6 +40,8 @@ u32 sdl_to_dik(SDL_Scancode s);
 
 /* the frame the game wants shown: DirectDraw calls this after Flip / Blt to the primary */
 void win_present(const void *pixels, int w, int h, int pitch_bytes, int bits, u32 rmask, u32 gmask, u32 bmask);
+/* show the primary surface if the game drew on it since the last present (ddraw.c) */
+void dd_present_pending(void);
 /* fullscreen (DirectDraw exclusive mode) or a normal window; Alt+Enter toggles it too */
 void win_set_fullscreen(int on);
 /* show a frame without keeping it as the game's last frame (dialogs drawn over the game) */
