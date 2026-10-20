@@ -1490,6 +1490,10 @@ static u32 imp_dd_DuplicateSurface(Cpu *c)
 }
 
 /* 8 */
+/* No 1600x1200: the game offers it, but five of its per-resolution switches (0x40cd3f,
+   0x41031c, 0x410542, 0x411181, 0x4112f1) only have cases for the first ten modes, so at
+   1600x1200 the 3D view and HUD come out unscaled from its 2560x1920 virtual screen (1.6x too
+   big, anchored top-left). The game only lists the modes enumerated here. */
 struct ModeDef { u32 w, h, bpp; };
 static const struct ModeDef display_modes[] = {
     {320, 240, 16},
@@ -1502,7 +1506,6 @@ static const struct ModeDef display_modes[] = {
     {1024, 768, 16},
     {1120, 840, 16},
     {1280, 960, 16},
-    {1600, 1200, 16},
     {320, 240, 8},
     {400, 300, 8},
     {480, 360, 8},
@@ -1513,7 +1516,6 @@ static const struct ModeDef display_modes[] = {
     {1024, 768, 8},
     {1120, 840, 8},
     {1280, 960, 8},
-    {1600, 1200, 8},
 };
 
 static u32 imp_dd_EnumDisplayModes(Cpu *c)

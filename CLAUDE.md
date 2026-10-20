@@ -13,7 +13,7 @@ A modern native port of Future Cop: L.A.P.D. (1998). Wanted, in order:
    currently unreliable), graphics settings, resolution.
 3. ~~High resolution through a hardware renderer, remastered assets~~: **both dropped by the
    user** (2026-10-18/19). The original software renderer is the target: it already does
-   every resolution up to 1600x1200. Tried and abandoned: an addon texture loader (reverted,
+   every resolution up to 1280x960. Tried and abandoned: an addon texture loader (reverted,
    commits ae8d924/316beec) and the game's 3dfx Glide path on OpenGL (branch `opengl`: it
    worked but broke some textures and effects). Don't revive them unless asked.
 4. Later: Windows and **Android** builds.
@@ -178,6 +178,11 @@ own test run (`plat_test.py` is headless; `--png`, `--audio`, `--input`).
   Windowed, DirectDraw's primary surface is the whole desktop (we report DESKTOP_W x DESKTOP_H,
   1600x1200, win.h) and only the main window's rectangle is shown. Fullscreen comes from
   SetCooperativeLevel (SDL fullscreen-desktop, letterboxed); Alt+Enter toggles it.
+- 1600x1200 is removed (user's choice, 2026-10-20): the game's own per-resolution switches
+  (0x40cd3f, 0x41031c, 0x410542, 0x411181, 0x4112f1) stop at index 9, so at index 10 the 3D view
+  and HUD stay in its 2560x1920 virtual space (1.6x too big, top-left). ddraw.c doesn't enumerate
+  it, dialog.c drops it from the Display Mode list, gdi_misc.c turns a saved Resolution 10 into 9.
+  Restoring it would mean adding the missing cases (coordinates x5/8, sizes x2.5 and x5).
 - Presenting: the menu redraws in ~50 blits straight onto the primary surface. Showing each one
   (each present waits for vsync) flickered for most of a second, so ddraw.c only marks the primary
   changed and presents it on the game's next PeekMessage/GetMessage, on Flip, or after 50 ms

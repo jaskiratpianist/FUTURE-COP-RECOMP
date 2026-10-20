@@ -1761,6 +1761,10 @@ u32 dlg_send(Cpu *c, u32 hwnd, u32 msg, u32 wp, u32 lp)
             /* Combobox / Listbox shared equivalents */
             case 0x0143: /* CB_ADDSTRING */
             case 0x0180: /* LB_ADDSTRING */
+                /* Preferences' Display Mode list: no 1600x1200, the game draws missions wrong in
+                   it (ddraw.c, display_modes). It is the last entry, so the indexes of the others
+                   stay the same; gdi_misc.c turns a saved Resolution of 10 into 9. */
+                if (ctrl->id == 0x3fd && lp && strstr(GSTR(lp), "1600x1200")) return (u32)-1;
                 if (ctrl->item_count < MAX_ITEMS && lp) {
                     int idx = ctrl->item_count++;
                     strncpy(ctrl->items[idx].text, GSTR(lp), sizeof(ctrl->items[0].text) - 1);

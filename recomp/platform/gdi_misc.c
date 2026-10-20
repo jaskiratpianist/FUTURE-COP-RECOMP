@@ -469,6 +469,14 @@ static void reg_load_locked(void)
     static const char dir[] = "C:\\FCopLAPD";
     if (!reg_find_value_locked(key, "Install Dir"))
         reg_set_value_locked(reg_get_or_create_key_locked(key), "Install Dir", 1 /* REG_SZ */, (const u8 *)dir, sizeof dir);
+    /* Resolution is an index into the game's mode list; 10 (1600x1200) is not offered (ddraw.c
+       display_modes): use 9, 1280x960 */
+    static const char settings[] = "HKEY_LOCAL_MACHINE\\Software\\Electronic Arts\\Future Cop\\Settings";
+    RegValue *res = reg_find_value_locked(settings, "Resolution");
+    if (res && res->data_len >= 4 && res->data[0] >= 10) {
+        static const u8 nine[4] = {9, 0, 0, 0};
+        reg_set_value_locked(reg_get_or_create_key_locked(settings), "Resolution", 4 /* REG_DWORD */, nine, 4);
+    }
 }
 
 static void reg_read_file_locked(void)
