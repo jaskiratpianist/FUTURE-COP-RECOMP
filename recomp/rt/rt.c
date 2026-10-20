@@ -6,6 +6,7 @@
 #include "cpu.h"
 
 u8 *MEM;
+u32 rt_frame_ticks = 8;
 
 struct entry { u32 addr; void (*fn)(Cpu *); };
 extern const struct entry recomp_table[];

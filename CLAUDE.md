@@ -203,6 +203,16 @@ own test run (`plat_test.py` is headless; `--png`, `--audio`, `--input`).
   video.c implements the DirectShow filter graph on pl_mpeg; `FCOP_SKIP_VIDEOS=1` skips
   them (plat_test.py does unless `--videos`, so the menu still appears after about 8 s).
 
+## Frame rate (branch fps60, experiment)
+
+The game's clock ticks at 300 Hz (0x4130c0: QueryPerformanceCounter, us x 3 x 0.0001). The mission
+loop (0x406a7f) waits until 8 ticks have passed since the last frame (37.5 fps), then passes the real
+elapsed ticks (0x511f58, clamped to 60) to the game update (0x43b310): the game logic is time-based.
+x86c FRAME_WAIT makes that wait read `rt_frame_ticks`; core.c sets it from FCOP_FPS (default 60 ->
+5 ticks; FCOP_FPS=37 is the original). Measured 60 fps at 1280x960, also 2-player. Other 8-tick
+waits (0x4071aa, 0x407278, 0x407295, probably the network game) are unchanged. `FCOP_FPS_LOG=1`
+logs frames per second. Not yet checked by playing: anything that assumes >= 8 ticks per frame.
+
 ## Performance (measured 2026-10-19, mission at 1280x960, game capped at 37 fps)
 
 The main thread went from 100% of a core to about 37%:

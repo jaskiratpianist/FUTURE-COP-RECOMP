@@ -414,6 +414,13 @@ int main(int argc, char **argv)
     unsigned k;
     int missing = 0;
     if (setup_paths(argc, argv)) return 1;
+    {   /* missions run at 60 fps (the original waits 8 ticks of 1/300 s: 37.5 fps); FCOP_FPS=37
+           gives the original rate */
+        const char *fps = getenv("FCOP_FPS");
+        int f = fps ? atoi(fps) : 60;
+        rt_frame_ticks = f > 0 ? (u32)((300 + f / 2) / f) : 8;
+        if (rt_frame_ticks < 1) rt_frame_ticks = 1;
+    }
     MEM = mmap(NULL, 1ull << 32, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
     if (MEM == MAP_FAILED) { perror("mmap 4GB"); return 1; }
     map(TIB_ADDR, TIB_ADDR + 0x1000);

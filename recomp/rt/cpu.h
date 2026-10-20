@@ -29,6 +29,7 @@ typedef struct Cpu {
 } Cpu;
 
 extern u8 *MEM;
+extern u32 rt_frame_ticks;  /* the mission loop's frame time in 1/300 s (x86c FRAME_WAIT) */
 
 static inline u8  rd8(u32 a)  { return MEM[a]; }
 static inline u16 rd16(u32 a) { u16 v; memcpy(&v, MEM + a, 2); return v; }

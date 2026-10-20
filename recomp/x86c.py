@@ -206,6 +206,10 @@ class Gen:
             todo = new
         self.self_modifying()
 
+    # The mission loop waits until 8 ticks of 1/300 s have passed (37.5 fps), then hands the
+    # real elapsed ticks to the game update, so a shorter wait runs it faster at the same speed
+    FRAME_WAIT = (0x406a7f,)  # cmp eax, 8
+
     PATCH_TABLE = 0x48ea20  # FUN_0045b1c0 rewrites code for the 555/565 pixel formats from this table
 
     def self_modifying(self):
@@ -765,6 +769,9 @@ class Gen:
                     b = "".join(f"\\x{x:02x}" for x in v.bytes)
                     code = (f"if (!memcmp(MEM + 0x{a:x}u, \"{b}\", {v.size})) {{ {self.insn(fn, v)} /* {v.mnemonic} {v.op_str} */ }} "
                             f"else {{ {code} }}")
+                if a in self.FRAME_WAIT:
+                    assert "((u32)0x8u)" in code, hex(a)
+                    code = code.replace("((u32)0x8u)", "rt_frame_ticks")
             except Unsupported as e:
                 self.unsupported[str(e)] = self.unsupported.get(str(e), 0) + 1
                 code = f"SYNC; rt_unimpl(c, 0x{a:x}u, \"{i.mnemonic} {i.op_str}\"); return;"

@@ -1061,6 +1061,17 @@ static void px_table_for(u32 rmask, u32 gmask, u32 bmask)
 void win_show(const void *pixels, int w, int h, int pitch_bytes, int bits, u32 rmask, u32 gmask, u32 bmask)
 {
     shot(pixels, w, h, pitch_bytes, bits, gmask);
+    {   /* FCOP_FPS_LOG=1: frames shown in each second */
+        static int on = -1, frames;
+        static u32 since;
+        if (on < 0) on = getenv("FCOP_FPS_LOG") != NULL;
+        if (on) {
+            u32 now = SDL_GetTicks();
+            if (!since) since = now;
+            frames++;
+            if (now - since >= 1000) { plat_log("fps %d (%dx%d)", frames, w, h); frames = 0; since = now; }
+        }
+    }
     if (!main_win) return;
     struct WinInternal *win_int = (struct WinInternal *)main_win;
     ensure_window_sdl(win_int);
