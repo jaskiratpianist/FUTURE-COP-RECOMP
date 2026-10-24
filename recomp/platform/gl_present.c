@@ -287,6 +287,31 @@ void glp_begin_frame(int w, int h)
     start_drawable(w, h);
 }
 
+unsigned glp_tex_new(void)
+{
+    GLuint t = 0;
+    if (glp_ctx) gl.GenTextures(1, &t);
+    return t;
+}
+
+void glp_tex_upload(unsigned tex, int w, int h, const uint8_t *rgba, int linear, int clamp)
+{
+    if (!glp_ctx || !tex) return;
+    gl.BindTexture(GL_TEXTURE_2D, tex);
+    gl.PixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, linear ? GL_LINEAR : GL_NEAREST);
+    gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, linear ? GL_LINEAR : GL_NEAREST);
+    gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, clamp ? GL_CLAMP_TO_EDGE : GL_REPEAT);
+    gl.TexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, clamp ? GL_CLAMP_TO_EDGE : GL_REPEAT);
+}
+
+void glp_tex_delete(unsigned tex)
+{
+    GLuint t = tex;
+    if (glp_ctx && t) gl.DeleteTextures(1, &t);
+}
+
 /* FCOP_SHOT=path: write each shown frame (the 4:3 picture as drawn) as a PPM */
 static void shot(void)
 {

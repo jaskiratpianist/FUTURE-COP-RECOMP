@@ -6,10 +6,17 @@
 #include "thrash.h"
 #include "win.h"
 #include "gl_present.h"
+#include "thrash_tex.h"
 
 #define THRASH_MODULE 0x60000000u
 
 static u32 about_p;
+static u32 states[24];      /* setstate values for ids 1..23 (opengla's range) */
+
+/* textures: the game gets a small guest object holding our table index + 1 at +0 */
+#define MAX_TEX 1024
+static struct { unsigned gl; int w, h, fmt; uint32_t hash; } texs[MAX_TEX];
+static int ntex;
 static int frame_open;      /* a frame was started (cleared) since the last pageflip */
 static unsigned frames;
 static Uint32 fps_t0;
@@ -83,20 +90,81 @@ static u32 imp_setvideomode(Cpu *c)
 }
 
 static u32 imp_window(Cpu *c) { (void)c; return 1; }
-static u32 imp_restore(Cpu *c) { (void)c; frame_open = 0; return 1; }
-static u32 imp_setstate(Cpu *c) { (void)c; return 1; }
+static u32 imp_treset(Cpu *c);
+static u32 imp_restore(Cpu *c) { frame_open = 0; imp_treset(c); return 1; }
+static u32 imp_setstate(Cpu *c)
+{
+    u32 id = ARG(0), v = ARG(1);
+    if (id >= 1 && id <= 23) states[id] = v;
+    return 1;
+}
+
+/* texture filter: env FCOP_TEXFILTER (linear/nearest) wins, else the game's own Filtering
+   option (state 7 = 1), as opengla.dll does */
+static int tex_linear(void)
+{
+    const char *e = getenv("FCOP_TEXFILTER");
+    if (e && *e) return strcasecmp(e, "nearest") != 0;
+    return states[7] == 1;
+}
 
 /* ---- textures -------------------------------------------------------------------------- */
 
+/* talloc(w, h, fmt, palette, mips) -> texture object */
 static u32 imp_talloc(Cpu *c)
 {
-    (void)c;
-    return galloc(16);
+    u32 obj;
+    if (ntex >= MAX_TEX) {
+        plat_log("THRASH talloc: out of textures");
+        return 0;
+    }
+    obj = galloc(16);
+    texs[ntex].gl = glp_tex_new();
+    texs[ntex].w = (int)ARG(0);
+    texs[ntex].h = (int)ARG(1);
+    texs[ntex].fmt = (int)ARG(2);
+    if (texs[ntex].fmt != 7) plat_log("THRASH talloc: format %d treated as 4444", texs[ntex].fmt);
+    wr32(obj, (u32)++ntex);
+    return obj;
 }
 
-static u32 imp_tupdate(Cpu *c) { (void)c; return 1; }
-static u32 imp_settexture(Cpu *c) { (void)c; return 1; }
-static u32 imp_treset(Cpu *c) { (void)c; return 1; }
+static int tex_index(u32 obj)
+{
+    u32 k = obj ? rd32(obj) : 0;
+    return k >= 1 && k <= (u32)ntex ? (int)k - 1 : -1;
+}
+
+/* tupdate(tex, pixels, palette): convert and upload */
+static u32 imp_tupdate(Cpu *c)
+{
+    static u8 *rgba;
+    static size_t cap;
+    int k = tex_index(ARG(0));
+    u32 px = ARG(1);
+    size_t need;
+    if (k < 0 || !px) return 0;
+    need = (size_t)texs[k].w * texs[k].h * 4;
+    if (need > cap && !(rgba = realloc(rgba, cap = need))) { cap = 0; return 0; }
+    thrash_tex_to_rgba8((const u16 *)G(px), rgba, texs[k].w, texs[k].h, texs[k].fmt);
+    texs[k].hash = thrash_tex_hash((const u16 *)G(px), texs[k].w, texs[k].h);
+    glp_tex_upload(texs[k].gl, texs[k].w, texs[k].h, rgba, tex_linear(), states[13] != 0);
+    return ARG(0);
+}
+
+static u32 imp_settexture(Cpu *c)
+{
+    states[1] = ARG(0);
+    return 1;
+}
+
+static u32 imp_treset(Cpu *c)
+{
+    (void)c;
+    for (int k = 0; k < ntex; k++) glp_tex_delete(texs[k].gl);
+    ntex = 0;
+    states[1] = 0;
+    return 1;
+}
 
 /* ---- drawing --------------------------------------------------------------------------- */
 

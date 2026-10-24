@@ -17,4 +17,9 @@ void glp_show16(const void *px, int w, int h, int pitch_bytes, uint32_t rmask, u
 void glp_begin_frame(int game_w, int game_h);
 void glp_swap(void);
 
+/* textures (RGBA8); linear/clamp choose filtering and wrapping */
+unsigned glp_tex_new(void);
+void glp_tex_upload(unsigned tex, int w, int h, const uint8_t *rgba, int linear, int clamp);
+void glp_tex_delete(unsigned tex);
+
 #endif
