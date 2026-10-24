@@ -12,6 +12,7 @@ import argparse, os, subprocess, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "recomp"))
 from paths import game_dir  # noqa: E402
+sys.stdout.reconfigure(errors="backslashreplace")  # the log may hold bytes the console cannot show
 ap = argparse.ArgumentParser()
 ap.add_argument("--seconds", type=int, default=15)
 ap.add_argument("--api", action="store_true", help="log every import call (FCOP_TRACE_API)")
