@@ -7,7 +7,7 @@
     .venv/bin/python -I recomp/plat_test.py --input "9000:click@156,306" --png build/shots/quit.png
         (scripted input, see FCOP_INPUT in CLAUDE.md; --png saves the last frame shown)
 """
-import argparse, fcntl, os, subprocess, sys
+import argparse, os, subprocess, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "recomp"))
@@ -24,9 +24,20 @@ ap.add_argument("--show", action="store_true", help="show the window (default: h
 ap.add_argument("--audio", help="record the game's sound output to this raw file (SDL disk audio driver) "
                 "and print its level per second")
 a = ap.parse_args()
+os.makedirs(os.path.join(ROOT, "build"), exist_ok=True)
 lock = open(os.path.join(ROOT, "build", "plat_test.lock"), "w")
-fcntl.flock(lock, fcntl.LOCK_EX)  # several workers share one build directory: take turns
-b = subprocess.run([os.path.join(ROOT, "recomp", "build.sh")], cwd=ROOT, capture_output=True, text=True)
+if os.name == "nt":  # Windows: run from the MSYS2 MinGW shell (build.sh needs sh, gcc, sdl2-config)
+    import msvcrt
+    while True:
+        try:
+            msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
+            break
+        except OSError:  # LK_LOCK gives up after 10 s
+            pass
+else:
+    import fcntl
+    fcntl.flock(lock, fcntl.LOCK_EX)  # several workers share one build directory: take turns
+b = subprocess.run(["sh", os.path.join(ROOT, "recomp", "build.sh")], cwd=ROOT, capture_output=True, text=True)
 for l in (b.stdout + b.stderr).splitlines():
     if l.startswith("COMPILE ERROR"):
         print("\n".join(x for x in (b.stdout + b.stderr).splitlines() if "error" in x.lower())[:4000])
@@ -54,11 +65,12 @@ if a.png:
         os.remove(os.path.join(shots, f))
     env["FCOP_SHOT"] = os.path.join(shots, "f%05d.ppm")
 try:
-    r = subprocess.run([os.path.join(ROOT, "build", "recomp", "fcop"), game_dir()],
+    r = subprocess.run([os.path.join(ROOT, "build", "recomp", "fcop.exe" if os.name == "nt" else "fcop"), game_dir()],
                        cwd=ROOT, capture_output=True, text=True, timeout=a.seconds, env=env)
     out, status = r.stdout + r.stderr, f"exited with {r.returncode}"
 except subprocess.TimeoutExpired as e:
-    out = (e.stdout or b"").decode(errors="replace") + (e.stderr or b"").decode(errors="replace")
+    dec = lambda x: x.decode(errors="replace") if isinstance(x, bytes) else x or ""  # str on Windows
+    out = dec(e.stdout) + dec(e.stderr)
     status = f"still running after {a.seconds} s (killed)"
 lines = out.splitlines()
 print(f"BUILD OK; game {status}; last {min(a.lines, len(lines))} of {len(lines)} log lines:")

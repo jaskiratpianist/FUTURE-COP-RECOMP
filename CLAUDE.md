@@ -44,7 +44,8 @@ recomp/rt/harness.c   test harness for difftest (demand-paged memory, traces)
 recomp/difftest.py    Unicorn vs recompiled C differential tests
 recomp/platform/      Win32/DirectX on SDL2: core.c (memory, thunks, handles, COM, loader, main),
                       host.h (rules for import code), win.h (shared window/input state),
-                      k32_*.c u32_*.c gdi_misc.c ddraw.c dinput.c dsound.c
+                      k32_*.c u32_*.c gdi_misc.c ddraw.c dinput.c dsound.c,
+                      os_win.c/h (Windows host: VirtualAlloc, setenv, fsync for MinGW)
 recomp/build.sh       generate + compile + link -> build/recomp/fcop
 recomp/plat_test.py   build and run the game briefly, print the log tail (the one command Gemini may run)
 recomp/plat_agy.py    hand one platform file to a Gemini worker (assignments are in this file)
@@ -57,6 +58,15 @@ docs/RECOMP_PLAN.md   design and milestones; docs/PLATFORM_TASK.md is the Gemini
 
 Setup: `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt`, SDL2 dev
 package installed. Build: `./recomp/build.sh`; run: `build/recomp/fcop <game dir>`.
+
+Windows (works, tested 2026-10-25): MSYS2 with `mingw-w64-x86_64-gcc` and
+`mingw-w64-x86_64-SDL2`; build in the "MSYS2 MinGW x64" shell. Setup: `python -m venv .venv &&
+.venv/Scripts/pip install -r requirements.txt` (Windows Python is fine). build.sh detects MinGW:
+it uses `.venv/Scripts/python.exe`, links a console program (log on stderr) with a 16 MB main
+stack and copies SDL2.dll next to `build/recomp/fcop.exe`. plat_test.py works from PowerShell
+too when `C:\msys64\mingw64\bin` and `C:\msys64\usr\bin` are on PATH (it runs `sh build.sh`).
+`.gitattributes` keeps `*.sh` at LF (the user's git has autocrlf=true). difftest.py stays
+Linux-only (mprotect/signals in harness.c).
 
 ## How the recompiled code works
 
@@ -168,6 +178,16 @@ own test run (`plat_test.py` is headless; `--png`, `--audio`, `--input`).
   Windowed, DirectDraw's primary surface is the whole desktop (we report DESKTOP_W x DESKTOP_H,
   1600x1200, win.h) and only the main window's rectangle is shown. Fullscreen comes from
   SetCooperativeLevel (SDL fullscreen-desktop, letterboxed); Alt+Enter toggles it.
+- No 1600x1200 (ddraw.c does not enumerate it): an original game bug. The game keeps HUD/2D
+  coordinates in a 2560x1920 virtual space and scales them per resolution index in switches
+  that only cover indices 0-9 (320x240 .. 1280x960; e.g. 0x40cd3f, 0x410552); index 10 takes the
+  default, unscaled, so only the top-left ~60% of the picture shows. Fix later by adding a 5/8
+  case, or with the OpenGL high-res route. A saved index 10 falls back to 1280x960.
+- Never use `__attribute__((weak))` for **data** that another file defines: on Windows (PE/COFF)
+  the reference does not resolve to the strong definition. u32_misc.c had weak copies of
+  vk_down/mouse_buttons from the Gemini days, and GetAsyncKeyState read garbage (mouse x as a
+  key state: keys stuck down, real presses ignored). Weak *functions* (rt.c) link correctly.
+- Windows: open files with O_BINARY (k32_file.c), or newline translation corrupts game data.
 - Pixel format: ddraw.c gives the game **555** by default. In 565 the software renderer's
   "Texture Coloring" (coloured lighting) comes out wrong (yellow/red floors with green
   specks; compare `FCOP_PIXFMT=565` with ColoringIsOff 0 and 1). Root cause not found yet:

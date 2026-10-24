@@ -5,7 +5,11 @@
 #include <pthread.h>
 #include <sched.h>
 #include <stdarg.h>
+#ifdef _WIN32
+#include "os_win.h"
+#else
 #include <sys/mman.h>
+#endif
 #include <unistd.h>
 #include "host.h"
 
@@ -367,7 +371,11 @@ static u32 missing_stub(Cpu *c) { (void)c; return 0; }
 
 static void map(u32 lo, u32 hi)
 {
+#ifdef _WIN32
+    if (!os_commit(MEM + lo, hi - lo)) { plat_log("VirtualAlloc commit failed"); exit(1); }
+#else
     if (mprotect(MEM + lo, hi - lo, PROT_READ | PROT_WRITE)) { perror("mprotect"); exit(1); }
+#endif
 }
 
 static int load_exe(const char *path)
@@ -408,8 +416,13 @@ int main(int argc, char **argv)
         return 2;
     }
     snprintf(game_dir, sizeof game_dir, "%s", argv[1]);
+#ifdef _WIN32
+    for (k = 0; game_dir[k]; k++) if (game_dir[k] == '\\') game_dir[k] = '/';  /* host_path splits at '/' */
+    if (!(MEM = os_reserve(1ull << 32))) { plat_log("cannot reserve 4 GB of address space"); return 1; }
+#else
     MEM = mmap(NULL, 1ull << 32, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
     if (MEM == MAP_FAILED) { perror("mmap 4GB"); return 1; }
+#endif
     map(TIB_ADDR, TIB_ADDR + 0x1000);
     map(STACK_LO, STACK_HI);
     map(IMAGE_LO, IMAGE_HI);

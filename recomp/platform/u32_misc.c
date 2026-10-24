@@ -10,17 +10,6 @@
 #include "host.h"
 #include "win.h"
 
-/* Weak fallbacks until u32_win.c is implemented by the other worker */
-__attribute__((weak)) volatile u8 vk_down[256];
-__attribute__((weak)) volatile u8 dik_down[256];
-__attribute__((weak)) volatile int mouse_x = 0, mouse_y = 0, mouse_buttons = 0;
-__attribute__((weak)) struct Win *main_win = NULL;
-__attribute__((weak)) void plat_pump(void) {}
-__attribute__((weak)) void msg_post(u32 hwnd, u32 message, u32 wparam, u32 lparam)
-{
-    (void)hwnd; (void)message; (void)wparam; (void)lparam;
-}
-
 
 
 /* ---- Keyboard, mouse and cursor ------------------------------------------------------ */

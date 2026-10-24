@@ -11,12 +11,6 @@
 #include "host.h"
 #include "win.h"
 
-/* Weak fallback for win_present in case u32_win.c has not provided it yet */
-__attribute__((weak)) void win_present(const void *pixels, int w, int h, int pitch_bytes, int bits, u32 rmask, u32 gmask, u32 bmask)
-{
-    (void)pixels; (void)w; (void)h; (void)pitch_bytes; (void)bits;
-    (void)rmask; (void)gmask; (void)bmask;
-}
 
 /* ---- Return Codes & Constants -------------------------------------------------------- */
 #define DD_OK                   0x00000000u
@@ -1467,6 +1461,9 @@ static u32 imp_dd_DuplicateSurface(Cpu *c)
 
 /* 8 */
 struct ModeDef { u32 w, h, bpp; };
+/* No 1600x1200: the game's resolution switches (0x40cd3f, 0x410552, ...) only handle indices
+   0-9 (up to 1280x960); at index 10 the HUD and 2D overlays stay in their 2560x1920 virtual
+   coordinates, so only the top-left part of the picture is shown. */
 static const struct ModeDef display_modes[] = {
     {320, 240, 16},
     {400, 300, 16},
@@ -1478,7 +1475,6 @@ static const struct ModeDef display_modes[] = {
     {1024, 768, 16},
     {1120, 840, 16},
     {1280, 960, 16},
-    {1600, 1200, 16},
     {320, 240, 8},
     {400, 300, 8},
     {480, 360, 8},
@@ -1489,7 +1485,6 @@ static const struct ModeDef display_modes[] = {
     {1024, 768, 8},
     {1120, 840, 8},
     {1280, 960, 8},
-    {1600, 1200, 8},
 };
 
 static u32 imp_dd_EnumDisplayModes(Cpu *c)

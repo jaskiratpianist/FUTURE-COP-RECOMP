@@ -5,6 +5,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include "host.h"
+#ifdef _WIN32
+#include "os_win.h"
+#endif
 
 /* ---- Version & Module Info ----------------------------------------------------------- */
 

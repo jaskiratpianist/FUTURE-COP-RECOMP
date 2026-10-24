@@ -7,6 +7,12 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include "host.h"
+#ifdef _WIN32
+#include "os_win.h"
+#endif
+#ifndef O_BINARY
+#define O_BINARY 0
+#endif
 
 #define GENERIC_READ    0x80000000u
 #define GENERIC_WRITE   0x40000000u
@@ -77,6 +83,7 @@ static u32 imp_CreateFileA(Cpu *c)
         oflags = O_RDONLY;
     }
 
+    oflags |= O_BINARY;  /* Windows: no newline translation */
     int existed = (access(hpath, F_OK) == 0);
 
     switch (disp) {
@@ -127,11 +134,13 @@ static u32 imp_CreateFileA(Cpu *c)
         return INVALID_HANDLE_VALUE;
     }
 
+#ifndef _WIN32
     if (fd == 0) {
         int fd2 = fcntl(0, F_DUPFD, 3);
         close(0);
         fd = fd2;
     }
+#endif
 
     if (disp == CREATE_ALWAYS || disp == OPEN_ALWAYS) {
         last_error = existed ? ERROR_ALREADY_EXISTS : ERROR_SUCCESS;
