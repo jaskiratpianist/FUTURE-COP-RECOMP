@@ -10,6 +10,8 @@
 #include <SDL.h>
 #include "host.h"
 #include "win.h"
+#include "thrash.h"
+#include "gl_present.h"
 #include "dialog.h"
 
 /* Win32 Constants */
@@ -239,12 +241,22 @@ static void ensure_window_sdl(struct WinInternal *w)
 
         window_size_for(&width, &height);
 
+        int gl = thrash_wanted();  /* OpenGL renderer: everything is shown through one GL context */
+        if (gl) {
+            SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
+            SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
+            SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+            SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
+            SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 24);
+        }
         w->win.sdl = SDL_CreateWindow(
             "Future Cop: L.A.P.D.",
             SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
             width, height,
-            SDL_WINDOW_HIDDEN | SDL_WINDOW_RESIZABLE
+            SDL_WINDOW_HIDDEN | SDL_WINDOW_RESIZABLE | (gl ? SDL_WINDOW_OPENGL : 0)
         );
+        if (w->win.sdl && gl && !glp_init(w->win.sdl))
+            plat_log("OpenGL unavailable: software renderer");
         if (!w->win.sdl) {
             plat_log("warn: SDL_CreateWindow failed: %s", SDL_GetError());
         } else if (fullscreen_state) {
@@ -1064,6 +1076,11 @@ void win_show(const void *pixels, int w, int h, int pitch_bytes, int bits, u32 r
     if (!win_int->win.visible) {
         SDL_ShowWindow(win_int->win.sdl);
         win_int->win.visible = 1;
+    }
+
+    if (glp_active() && bits == 16) {
+        glp_show16(pixels, w, h, pitch_bytes, rmask, gmask, bmask);
+        return;
     }
 
     /* Determine SDL pixel format */

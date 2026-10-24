@@ -1,0 +1,153 @@
+/* The game's THRASH 3D driver (normally opengla.dll and friends from the CD) implemented
+ * natively: LoadLibraryA of a "...a.dll" driver returns a pseudo module, GetProcAddress hands
+ * out thunks to the functions below, and they draw through gl_present.c.
+ * docs/THRASH_NOTES.md describes every call. */
+#include <SDL.h>
+#include "thrash.h"
+#include "win.h"
+#include "gl_present.h"
+
+#define THRASH_MODULE 0x60000000u
+
+static u32 about_p;
+static int frame_open;      /* a frame was started (cleared) since the last pageflip */
+static unsigned frames;
+static Uint32 fps_t0;
+
+/* the game's coordinate space: the DirectDraw display mode it set for the mission */
+static void begin_if_needed(void)
+{
+    if (frame_open) return;
+    frame_open = 1;
+    glp_begin_frame(ddraw_mode_w, ddraw_mode_h);
+}
+
+static void log_once(const char *name)
+{
+    static char seen[64][24];
+    static int n;
+    for (int k = 0; k < n; k++)
+        if (!strcmp(seen[k], name)) return;
+    if (n < 64) snprintf(seen[n++], sizeof seen[0], "%s", name);
+    plat_log("THRASH %s called (not used by the game so far)", name);
+}
+
+/* ---- set-up ---------------------------------------------------------------------------- */
+
+static u32 imp_about(Cpu *c)
+{
+    (void)c;
+    if (!about_p) {
+        about_p = galloc(0x80);
+        wr32(about_p + 0x00, 0x4c47504f);  /* 'OPGL'; must not be 'XFD3' (the game's 3Dfx flag) */
+        wr32(about_p + 0x04, 0x80);
+        wr32(about_p + 0x08, 0x68);        /* interface version the game requires */
+        wr32(about_p + 0x3c, 0);           /* no extra display modes */
+        gstrcpy(about_p + 0x4c, "OpenGL 3.3 (native)", 0x30);
+    }
+    return about_p;
+}
+
+static u32 imp_is(Cpu *c) { (void)c; return glp_active(); }
+static u32 imp_selectdisplay(Cpu *c) { (void)c; return 0; }
+
+static u32 imp_init(Cpu *c)
+{
+    (void)c;
+    if (!glp_active()) {
+        plat_log("THRASH init: no OpenGL context");
+        return 0;
+    }
+    plat_log("THRASH init ok");
+    return 1;
+}
+
+static u32 imp_setvideomode(Cpu *c)
+{
+    (void)c;
+    frame_open = 0;
+    plat_log("THRASH setvideomode: %dx%d", ddraw_mode_w, ddraw_mode_h);
+    return 1;
+}
+
+static u32 imp_window(Cpu *c) { (void)c; return 1; }
+static u32 imp_restore(Cpu *c) { (void)c; frame_open = 0; return 1; }
+static u32 imp_setstate(Cpu *c) { (void)c; return 1; }
+
+/* ---- textures -------------------------------------------------------------------------- */
+
+static u32 imp_talloc(Cpu *c)
+{
+    (void)c;
+    return galloc(16);
+}
+
+static u32 imp_tupdate(Cpu *c) { (void)c; return 1; }
+static u32 imp_settexture(Cpu *c) { (void)c; return 1; }
+static u32 imp_treset(Cpu *c) { (void)c; return 1; }
+
+/* ---- drawing --------------------------------------------------------------------------- */
+
+static u32 imp_drawtri(Cpu *c) { (void)c; begin_if_needed(); return 1; }
+static u32 imp_drawtrimesh(Cpu *c) { (void)c; begin_if_needed(); return 1; }
+static u32 imp_drawline(Cpu *c) { (void)c; begin_if_needed(); return 1; }
+static u32 imp_flushwindow(Cpu *c) { (void)c; begin_if_needed(); return 1; }
+
+static u32 imp_pageflip(Cpu *c)
+{
+    Uint32 now = SDL_GetTicks();
+    (void)c;
+    begin_if_needed();
+    glp_swap();
+    frame_open = 0;
+    frames++;
+    if (now - fps_t0 >= 1000) {
+        if (fps_t0) plat_log("THRASH fps %u", frames * 1000 / (now - fps_t0));
+        fps_t0 = now;
+        frames = 0;
+    }
+    return 1;
+}
+
+/* ---- calls the game never makes: safe no-ops ------------------------------------------- */
+
+#define UNUSED(name, ret) static u32 imp_##name(Cpu *c) { (void)c; log_once(#name); return ret; }
+UNUSED(clearwindow, 1) UNUSED(clip, 1) UNUSED(idle, 1) UNUSED(sync, 0) UNUSED(lockwindow, 0)
+UNUSED(unlockwindow, 1) UNUSED(readrect, 0) UNUSED(writerect, 0) UNUSED(drawquad, 1)
+UNUSED(drawquadmesh, 1) UNUSED(drawtristrip, 1) UNUSED(drawtrifan, 1) UNUSED(drawlinemesh, 1)
+UNUSED(drawlinestrip, 1) UNUSED(drawpoint, 1) UNUSED(drawpointmesh, 1) UNUSED(drawpointstrip, 1)
+
+static const struct ImpDef thrash_funcs[] = {
+    IMPORT(about, 0), IMPORT(is, 0), IMPORT(window, 1), IMPORT(clearwindow, 0), IMPORT(flushwindow, 0),
+    IMPORT(pageflip, 0), IMPORT(idle, 0), IMPORT(sync, 1), IMPORT(lockwindow, 0), IMPORT(unlockwindow, 1),
+    IMPORT(clip, 4), IMPORT(setstate, 2), IMPORT(readrect, 5), IMPORT(writerect, 5), IMPORT(drawquad, 4),
+    IMPORT(drawquadmesh, 3), IMPORT(drawtri, 3), IMPORT(drawtrimesh, 3), IMPORT(drawtristrip, 2),
+    IMPORT(drawtrifan, 2), IMPORT(drawline, 2), IMPORT(drawlinemesh, 3), IMPORT(drawlinestrip, 2),
+    IMPORT(drawpoint, 1), IMPORT(drawpointmesh, 3), IMPORT(drawpointstrip, 2), IMPORT(init, 0),
+    IMPORT(restore, 0), IMPORT(selectdisplay, 1), IMPORT(setvideomode, 3), IMPORT(talloc, 5),
+    IMPORT(tupdate, 3), IMPORT(settexture, 1), IMPORT(treset, 0),
+};
+
+u32 thrash_load(const char *dll_name)
+{
+    size_t n = strlen(dll_name);
+    if (n < 6 || strcasecmp(dll_name + n - 5, "a.dll") || !thrash_wanted()) return 0;
+    if (!glp_active()) {
+        plat_log("THRASH: %s requested but OpenGL is not available: software renderer", dll_name);
+        return 0;
+    }
+    plat_log("THRASH: %s -> OpenGL", dll_name);
+    return THRASH_MODULE;
+}
+
+u32 thrash_proc(u32 module, const char *name)
+{
+    if (module != THRASH_MODULE || strncmp(name, "_THRASH_", 8)) return 0;
+    name += 8;
+    for (unsigned k = 0; k < sizeof thrash_funcs / sizeof thrash_funcs[0]; k++) {
+        size_t l = strlen(thrash_funcs[k].name);
+        if (!strncmp(name, thrash_funcs[k].name, l) && (name[l] == '@' || !name[l]))
+            return thunk_new(thrash_funcs[k].name, thrash_funcs[k].nargs, thrash_funcs[k].fn);
+    }
+    return 0;
+}
