@@ -42,8 +42,6 @@ u32 sdl_to_dik(SDL_Scancode s);
 void win_present(const void *pixels, int w, int h, int pitch_bytes, int bits, u32 rmask, u32 gmask, u32 bmask);
 /* fullscreen (DirectDraw exclusive mode) or a normal window; Alt+Enter toggles it too */
 void win_set_fullscreen(int on);
-/* the DirectDraw display mode last set (ddraw.c): the THRASH coordinate space */
-extern int ddraw_mode_w, ddraw_mode_h;
 /* show a frame without keeping it as the game's last frame (dialogs drawn over the game) */
 void win_show(const void *pixels, int w, int h, int pitch_bytes, int bits, u32 rmask, u32 gmask, u32 bmask);
 /* a 640x480 16-bit video frame from any thread, shown on the main thread by plat_pump; the

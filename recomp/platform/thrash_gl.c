@@ -10,8 +10,10 @@
 
 #define THRASH_MODULE 0x60000000u
 
+int thrash_frame_last;
 static u32 about_p;
 static u32 states[24];      /* setstate values for ids 1..23 (opengla's range) */
+static u32 blend_src = 2, blend_dst = 3;  /* setstate 0x194 / 0x195 (d3da.dll's blend factors) */
 
 /* textures: the game gets a small guest object holding our table index + 1 at +0 */
 #define MAX_TEX 1024
@@ -21,12 +23,24 @@ static int frame_open;      /* a frame was started (cleared) since the last page
 static unsigned frames;
 static Uint32 fps_t0;
 
-/* the game's coordinate space: the DirectDraw display mode it set for the mission */
+/* The game's coordinate space: its current resolution, an index (0x511e58) into its table of
+   20-byte entries {.., w, h, bpp} at 0x48707c. (The DirectDraw display mode can differ: with
+   a saved 1600x1200 the game sets that mode, then renders at 1280x960.) */
+void thrash_game_size(int *w, int *h)
+{
+    u32 k = rd32(0x511e58);
+    *w = k <= 10 ? (int)rd32(0x487080 + 20 * k) : 640;
+    *h = k <= 10 ? (int)rd32(0x487084 + 20 * k) : 480;
+    if (*w < 320 || *h < 200) { *w = 640; *h = 480; }
+}
+
 static void begin_if_needed(void)
 {
+    int w, h;
     if (frame_open) return;
     frame_open = 1;
-    glp_begin_frame(ddraw_mode_w, ddraw_mode_h);
+    thrash_game_size(&w, &h);
+    glp_begin_frame(w, h);
 }
 
 static void log_once(const char *name)
@@ -83,9 +97,16 @@ static u32 imp_init(Cpu *c)
 
 static u32 imp_setvideomode(Cpu *c)
 {
+    /* opengla.dll's defaults (docs/THRASH_NOTES.md) */
+    static const u32 defaults[][2] = { {1, 0}, {2, 1}, {7, 1}, {3, 0}, {5, 0}, {6, 1}, {10, 2}, {11, 1}, {4, 1}, {14, 0}, {13, 0} };
     (void)c;
+    for (unsigned k = 0; k < sizeof defaults / sizeof defaults[0]; k++) states[defaults[k][0]] = defaults[k][1];
     frame_open = 0;
-    plat_log("THRASH setvideomode: %dx%d", ddraw_mode_w, ddraw_mode_h);
+    {
+        int w, h;
+        thrash_game_size(&w, &h);
+        plat_log("THRASH setvideomode: %dx%d", w, h);
+    }
     return 1;
 }
 
@@ -96,6 +117,8 @@ static u32 imp_setstate(Cpu *c)
 {
     u32 id = ARG(0), v = ARG(1);
     if (id >= 1 && id <= 23) states[id] = v;
+    else if (id == 0x194) blend_src = v;
+    else if (id == 0x195) blend_dst = v;
     return 1;
 }
 
@@ -168,9 +191,63 @@ static u32 imp_treset(Cpu *c)
 
 /* ---- drawing --------------------------------------------------------------------------- */
 
-static u32 imp_drawtri(Cpu *c) { (void)c; begin_if_needed(); return 1; }
-static u32 imp_drawtrimesh(Cpu *c) { (void)c; begin_if_needed(); return 1; }
-static u32 imp_drawline(Cpu *c) { (void)c; begin_if_needed(); return 1; }
+/* a game vertex (32 bytes, docs/THRASH_NOTES.md) as the GL backend takes it */
+static void vertex(u32 p, struct GlpVertex *o)
+{
+    u32 col = rd32(p + 0x10);
+    memcpy(&o->x, G(p), 16);  /* x, y, z, 1/w */
+    o->r = (u8)(col >> 16);
+    o->g = (u8)(col >> 8);
+    o->b = (u8)col;
+    o->a = (u8)(col >> 24);
+    memcpy(&o->u, G(p + 0x18), 8);
+}
+
+static void apply_states(void)
+{
+    int k = states[1] ? tex_index(states[1]) : -1;
+    begin_if_needed();
+    glp_set_texture(k >= 0 ? texs[k].gl : 0);
+    glp_set_blend(states[10] != 0, (int)blend_src, (int)blend_dst);
+    glp_set_depth_test(states[4] != 0);
+    glp_set_cull((int)states[2]);
+}
+
+static u32 imp_drawtri(Cpu *c)
+{
+    struct GlpVertex v[3];
+    apply_states();
+    for (int k = 0; k < 3; k++) vertex(ARG(k), &v[k]);
+    glp_draw(0, v, 3);
+    return 1;
+}
+
+/* drawtrimesh(n, verts, idx): n triangles, 3n u32 indices into the 32-byte vertex array */
+static u32 imp_drawtrimesh(Cpu *c)
+{
+    static struct GlpVertex v[3 * 256];
+    int n = (int)ARG(0), done = 0;
+    u32 verts = ARG(1), idx = ARG(2);
+    apply_states();
+    while (done < 3 * n) {
+        int m = 3 * n - done > (int)(sizeof v / sizeof v[0]) ? (int)(sizeof v / sizeof v[0]) : 3 * n - done;
+        for (int k = 0; k < m; k++) vertex(verts + 32 * rd32(idx + 4 * (u32)(done + k)), &v[k]);
+        glp_draw(0, v, m);
+        done += m;
+    }
+    return 1;
+}
+
+static u32 imp_drawline(Cpu *c)
+{
+    struct GlpVertex v[2];
+    apply_states();
+    vertex(ARG(0), &v[0]);
+    vertex(ARG(1), &v[1]);
+    glp_draw(1, v, 2);
+    return 1;
+}
+
 static u32 imp_flushwindow(Cpu *c) { (void)c; begin_if_needed(); return 1; }
 
 static u32 imp_pageflip(Cpu *c)
@@ -178,11 +255,12 @@ static u32 imp_pageflip(Cpu *c)
     Uint32 now = SDL_GetTicks();
     (void)c;
     begin_if_needed();
-    glp_swap();
+    if (!getenv("FCOP_THRASH_NODRAW")) glp_swap();  /* NODRAW: measure the game without the GPU path */
     frame_open = 0;
+    thrash_frame_last = 1;
     frames++;
     if (now - fps_t0 >= 1000) {
-        if (fps_t0) plat_log("THRASH fps %u", frames * 1000 / (now - fps_t0));
+        if (fps_t0 && getenv("FCOP_FPS")) plat_log("THRASH fps %u", frames * 1000 / (now - fps_t0));
         fps_t0 = now;
         frames = 0;
     }

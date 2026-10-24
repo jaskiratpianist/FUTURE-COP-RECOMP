@@ -15,4 +15,9 @@ int thrash_wanted(void);
 u32 thrash_load(const char *dll_name);
 u32 thrash_proc(u32 module, const char *name);
 
+/* 1 while the picture on screen is a THRASH (mission) frame, not a 16-bit DirectDraw one */
+extern int thrash_frame_last;
+/* the game's current resolution: the coordinate space of THRASH vertices */
+void thrash_game_size(int *w, int *h);
+
 #endif

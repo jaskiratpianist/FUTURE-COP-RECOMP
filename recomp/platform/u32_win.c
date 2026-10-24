@@ -998,6 +998,14 @@ static int last_w, last_h, last_565;
 
 int win_last_frame(const u16 **px, int *w, int *h, int *is565)
 {
+    int gw, gh;
+    thrash_game_size(&gw, &gh);
+    if (glp_active() && thrash_frame_last && gw <= DESKTOP_W && gh <= DESKTOP_H && glp_read_frame16(last_px, gw, gh)) {
+        last_w = gw;  /* the mission picture drawn by OpenGL, in the game's resolution */
+        last_h = gh;
+        last_565 = 1;
+        thrash_frame_last = 0;
+    }
     if (!last_w) return 0;
     *px = last_px; *w = last_w; *h = last_h; *is565 = last_565;
     return 1;
@@ -1042,6 +1050,17 @@ static void overlay_pump(void)
 
 void win_present(const void *pixels, int w, int h, int pitch_bytes, int bits, u32 rmask, u32 gmask, u32 bmask)
 {
+    static unsigned frames;
+    static Uint32 t0;
+    if (getenv("FCOP_FPS")) {  /* frames the game presents per second (software renderer, menus) */
+        Uint32 now = SDL_GetTicks();
+        frames++;
+        if (now - t0 >= 1000) {
+            if (t0) plat_log("presented fps %u", frames * 1000 / (now - t0));
+            t0 = now;
+            frames = 0;
+        }
+    }
     if (bits == 16 && w <= DESKTOP_W && h <= DESKTOP_H) {
         for (int y = 0; y < h; y++)
             memcpy(last_px + y * w, (const u8 *)pixels + y * pitch_bytes, (size_t)w * 2);
@@ -1085,6 +1104,7 @@ void win_show(const void *pixels, int w, int h, int pitch_bytes, int bits, u32 r
     }
 
     if (glp_active() && bits == 16) {
+        thrash_frame_last = 0;
         glp_show16(pixels, w, h, pitch_bytes, rmask, gmask, bmask);
         return;
     }

@@ -1460,8 +1460,6 @@ static u32 imp_dd_DuplicateSurface(Cpu *c)
 }
 
 /* 8 */
-int ddraw_mode_w = 640, ddraw_mode_h = 480;
-
 struct ModeDef { u32 w, h, bpp; };
 /* No 1600x1200: the game's resolution switches (0x40cd3f, 0x410552, ...) only handle indices
    0-9 (up to 1280x960); at index 10 the HUD and 2D overlays stay in their 2560x1920 virtual
@@ -1681,8 +1679,6 @@ static u32 imp_dd_RestoreDisplayMode(Cpu *c)
         dd->bpp = 16;
         dd->mode_set = 0;
         plat_log("display mode: %ux%u %u bpp", dd->width, dd->height, dd->bpp);
-        ddraw_mode_w = (int)dd->width;
-        ddraw_mode_h = (int)dd->height;
     }
     return DD_OK;
 }
@@ -1707,8 +1703,6 @@ static u32 imp_dd_SetCooperativeLevel(Cpu *c)
             dd->bpp = 16;
             dd->mode_set = 0;
             plat_log("display mode: %ux%u %u bpp", dd->width, dd->height, dd->bpp);
-            ddraw_mode_w = (int)dd->width;
-            ddraw_mode_h = (int)dd->height;
         }
     }
     return DD_OK;
@@ -1728,8 +1722,6 @@ static u32 imp_dd_SetDisplayMode(Cpu *c)
         if (bpp) dd->bpp = bpp;
         dd->mode_set = 1;
         plat_log("display mode: %ux%u %u bpp", dd->width, dd->height, dd->bpp);
-        ddraw_mode_w = (int)dd->width;
-        ddraw_mode_h = (int)dd->height;
     }
     return DD_OK;
 }
@@ -1785,8 +1777,6 @@ static u32 imp_dd2_SetDisplayMode(Cpu *c)
         if (bpp) dd->bpp = bpp;
         dd->mode_set = 1;
         plat_log("display mode: %ux%u %u bpp", dd->width, dd->height, dd->bpp);
-        ddraw_mode_w = (int)dd->width;
-        ddraw_mode_h = (int)dd->height;
     }
     return DD_OK;
 }

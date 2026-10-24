@@ -117,15 +117,19 @@ no `clip` calls (the game positions each view's vertices itself).
 | 13 | 0 / 1 | texture wrap REPEAT / CLAMP for later uploads |
 | 14, 15, 21, 22, 23 | | fog density, colour, mode, start, end (game does not set them) |
 | 19 | pointer | state callback (above) |
-| 0x194 | 0 / 1 / 2 | not handled by opengla (ignored). Set ~45 times per frame by the game: probably a transparency mode for other drivers |
-| 0x195 | 0 / 3 / 8 | not handled by opengla (ignored); set with 0x194 |
+| 0x194 | 0..9 | source blend factor (ignored by opengla; d3da.dll maps it): 0 ONE, 1 ZERO, 2 SRC_ALPHA, 3 ONE_MINUS_SRC_ALPHA, 4 DST_ALPHA, 5 ONE_MINUS_DST_ALPHA, 6 SRC_COLOR, 7 DST_COLOR, 8 ONE_MINUS_SRC_COLOR, 9 ONE_MINUS_DST_COLOR. Game: 0, 1, 2 |
+| 0x195 | 0..9 | destination blend factor, same codes. Game pairs: (2,3) normal alpha, (0,0) additive glow, (1,8) darkening |
 
 ## Consequences for our implementation
 
 - Map x, y from the display-mode size to the 4:3 viewport; depth from z.
-- Blending is on by default (state 10 = 2), so per-vertex alpha and texture alpha (4444)
-  give the game's transparency; 0x194/0x195 can be ignored like opengla does (check the
-  picture against the software renderer; if something differs, look at d3da.dll's handling
-  of 0x194/0x195).
-- The game's Resolution index sets the coordinate space; index 10 (1600x1200) triggers the
-  HUD scaling bug (CLAUDE.md), so keep the index at 9 or lower in OpenGL mode as well.
+- Blending is on by default (state 10 = 2); 0x194/0x195 choose the factors. opengla ignores
+  them, so its glows came out dark; d3da.dll and our port honour them (additive glows match
+  the software renderer).
+- Coordinate space: the game's current resolution, entry `rd32(0x511e58)` of its table at
+  0x48707c ({.., w at +4, h at +8, ..}, 20 bytes each). Not the DirectDraw display mode:
+  with a saved 1600x1200 (index 10) the game still sets that display mode but renders at
+  1280x960 (index 9), because the driver's mode list (`about()+0x3c/+0x40`) decides which
+  indices are available in hardware mode. Our list leaves out 1600x1200 (HUD scaling bug).
+- The hardware-mode Preferences dialog shows the driver's modes and a "Filtering" checkbox
+  (setstate 7), no Fullscreen checkbox; missions then run windowed unless toggled.

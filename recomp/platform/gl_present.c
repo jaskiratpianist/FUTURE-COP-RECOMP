@@ -33,6 +33,7 @@ void plat_log(const char *fmt, ...);
     X(void, BlendFunc, (GLenum, GLenum)) \
     X(void, DepthFunc, (GLenum)) \
     X(void, DepthMask, (GLboolean)) \
+    X(void, FrontFace, (GLenum)) \
     X(void, GenTextures, (GLsizei, GLuint *)) \
     X(void, DeleteTextures, (GLsizei, const GLuint *)) \
     X(void, BindTexture, (GLenum, GLuint)) \
@@ -75,10 +76,6 @@ void plat_log(const char *fmt, ...);
 #define GLP_DECL(ret, name, args) ret (APIENTRY *name) args;
 static struct { GLP_FUNCS(GLP_DECL) } gl;
 
-/* one vertex as the shader takes it: position (x, y in game pixels, z depth 0..1, q = 1/w),
-   colour RGBA, texture coordinates */
-struct GlpVertex { float x, y, z, q; uint8_t r, g, b, a; float u, v; };
-
 static SDL_Window *glp_window;
 static SDL_GLContext glp_ctx;
 static SDL_threadID glp_thread;
@@ -90,6 +87,16 @@ static int game_w = 640, game_h = 480;
 static GLuint fbo, rb_color, rb_depth;
 static int fbo_w, fbo_h;
 static int vp[4];  /* the 4:3 viewport inside it */
+static GLuint small_fbo, small_rb;  /* glp_read_frame16 */
+static int small_w, small_h;
+
+/* the batch: vertices sharing one state */
+#define BATCH_MAX 65536
+static struct GlpVertex batch[BATCH_MAX];
+static int batch_n;
+static struct { unsigned tex; int blend, bsrc, bdst, depth, cull, lines; } want = { 0, 0, 2, 3, 0, 0, 0 }, have;
+static int have_valid;
+static void flush(void);
 
 static const char *vs_src =
     "#version 330 core\n"
@@ -252,6 +259,7 @@ void glp_show16(const void *px, int w, int h, int pitch_bytes, uint32_t rmask, u
     int k, is565 = gmask == 0x7e0;
     (void)rmask; (void)bmask;
     if (!glp_ctx) return;
+    flush();
     start_drawable(w, h);
     gl.Disable(GL_BLEND);
     gl.Disable(GL_DEPTH_TEST);
@@ -278,13 +286,99 @@ void glp_show16(const void *px, int w, int h, int pitch_bytes, uint32_t rmask, u
     gl.Uniform1i(u_use_tex, 1);
     gl.BufferData(GL_ARRAY_BUFFER, sizeof q, q, GL_STREAM_DRAW);
     gl.DrawArrays(GL_TRIANGLES, 0, 6);
+    have_valid = 0;
     glp_swap();
+}
+
+static void flush(void)
+{
+    if (!batch_n) return;
+    if (!have_valid || want.blend != have.blend || want.bsrc != have.bsrc || want.bdst != have.bdst) {
+        static const GLenum factor[10] = { GL_ONE, GL_ZERO, GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_DST_ALPHA,
+            GL_ONE_MINUS_DST_ALPHA, GL_SRC_COLOR, GL_DST_COLOR, GL_ONE_MINUS_SRC_COLOR, GL_ONE_MINUS_DST_COLOR };
+        if (want.blend) gl.Enable(GL_BLEND); else gl.Disable(GL_BLEND);
+        gl.BlendFunc(factor[want.bsrc], factor[want.bdst]);
+    }
+    if (!have_valid || want.depth != have.depth) {
+        if (want.depth) gl.Enable(GL_DEPTH_TEST); else gl.Disable(GL_DEPTH_TEST);
+        gl.DepthFunc(GL_LEQUAL);
+    }
+    if (!have_valid || want.cull != have.cull) {
+        if (want.cull) gl.Enable(GL_CULL_FACE); else gl.Disable(GL_CULL_FACE);
+        gl.FrontFace(want.cull == 1 ? GL_CW : GL_CCW);
+    }
+    if (!have_valid || want.tex != have.tex) {
+        if (want.tex) gl.BindTexture(GL_TEXTURE_2D, want.tex);
+        gl.Uniform1i(u_use_tex, want.tex != 0);
+    }
+    have = want;
+    have_valid = 1;
+    gl.BufferData(GL_ARRAY_BUFFER, (GLsizeiptr)(batch_n * sizeof batch[0]), batch, GL_STREAM_DRAW);
+    gl.DrawArrays(want.lines ? GL_LINES : GL_TRIANGLES, 0, batch_n);
+    batch_n = 0;
+}
+
+#define SET_STATE(field, value) do { if (want.field != (value)) { flush(); want.field = (value); } } while (0)
+void glp_set_texture(unsigned tex) { SET_STATE(tex, tex); }
+void glp_set_blend(int on, int src, int dst)
+{
+    SET_STATE(blend, on != 0);
+    SET_STATE(bsrc, src >= 0 && src <= 9 ? src : 2);
+    SET_STATE(bdst, dst >= 0 && dst <= 9 ? dst : 3);
+}
+void glp_set_depth_test(int on) { SET_STATE(depth, on != 0); }
+void glp_set_cull(int mode) { SET_STATE(cull, mode); }
+
+void glp_draw(int lines, const struct GlpVertex *v, int n)
+{
+    if (!glp_ctx || n > BATCH_MAX) return;
+    SET_STATE(lines, lines != 0);
+    if (batch_n + n > BATCH_MAX) flush();
+    memcpy(batch + batch_n, v, (size_t)n * sizeof *v);
+    batch_n += n;
+}
+
+int glp_read_frame16(uint16_t *dst, int w, int h)
+{
+    static uint8_t *rgb;
+    static size_t cap;
+    size_t need = (size_t)w * h * 3;
+    if (!glp_ctx || !fbo || w < 1 || h < 1) return 0;
+    if (need > cap && !(rgb = realloc(rgb, cap = need))) { cap = 0; return 0; }
+    flush();
+    if (!small_fbo) {
+        gl.GenFramebuffers(1, &small_fbo);
+        gl.GenRenderbuffers(1, &small_rb);
+    }
+    if (w != small_w || h != small_h) {
+        gl.BindRenderbuffer(GL_RENDERBUFFER, small_rb);
+        gl.RenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, w, h);
+        gl.BindFramebuffer(GL_FRAMEBUFFER, small_fbo);
+        gl.FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, small_rb);
+        small_w = w;
+        small_h = h;
+    }
+    gl.BindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
+    gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, small_fbo);
+    gl.BlitFramebuffer(vp[0], vp[1], vp[0] + vp[2], vp[1] + vp[3], 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+    gl.BindFramebuffer(GL_READ_FRAMEBUFFER, small_fbo);
+    gl.PixelStorei(GL_PACK_ALIGNMENT, 1);
+    gl.ReadPixels(0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, rgb);
+    gl.BindFramebuffer(GL_FRAMEBUFFER, fbo);
+    for (int y = 0; y < h; y++) {
+        const uint8_t *p = rgb + (size_t)(h - 1 - y) * w * 3;  /* GL rows are bottom-up */
+        for (int x = 0; x < w; x++, p += 3)
+            dst[(size_t)y * w + x] = (uint16_t)((p[0] >> 3) << 11 | (p[1] >> 2) << 5 | p[2] >> 3);
+    }
+    return 1;
 }
 
 void glp_begin_frame(int w, int h)
 {
     if (!glp_ctx) return;
+    flush();
     start_drawable(w, h);
+    have_valid = 0;
 }
 
 unsigned glp_tex_new(void)
@@ -297,6 +391,8 @@ unsigned glp_tex_new(void)
 void glp_tex_upload(unsigned tex, int w, int h, const uint8_t *rgba, int linear, int clamp)
 {
     if (!glp_ctx || !tex) return;
+    flush();  /* draws already batched must use the old content */
+    have_valid = 0;  /* the binding changes */
     gl.BindTexture(GL_TEXTURE_2D, tex);
     gl.PixelStorei(GL_UNPACK_ALIGNMENT, 4);
     gl.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
@@ -309,7 +405,10 @@ void glp_tex_upload(unsigned tex, int w, int h, const uint8_t *rgba, int linear,
 void glp_tex_delete(unsigned tex)
 {
     GLuint t = tex;
-    if (glp_ctx && t) gl.DeleteTextures(1, &t);
+    if (!glp_ctx || !t) return;
+    flush();
+    have_valid = 0;
+    gl.DeleteTextures(1, &t);
 }
 
 /* FCOP_SHOT=path: write each shown frame (the 4:3 picture as drawn) as a PPM */
@@ -339,6 +438,7 @@ static void shot(void)
 void glp_swap(void)
 {
     if (!glp_ctx || !fbo) return;
+    flush();
     shot();
     gl.BindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
     gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
