@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include "host.h"
 #include "win.h"
+#include "thrash.h"
 #include "sound.h"
 #include "video.h"
 
@@ -452,12 +453,8 @@ static void reg_save_locked(void)
     reg_dirty = 0;
 }
 
-static void reg_load_locked(void)
+static void reg_read_file_locked(void)
 {
-    if (reg_loaded) return;
-    reg_loaded = 1;
-    /* the game's installer creates its key; the game only opens it */
-    reg_get_or_create_key_locked("HKEY_LOCAL_MACHINE\\Software\\Electronic Arts\\Future Cop");
     char reg_path[1200];
     snprintf(reg_path, sizeof(reg_path), "%s/registry.txt", game_dir);
     FILE *f = fopen(reg_path, "r");
@@ -513,6 +510,36 @@ static void reg_load_locked(void)
         }
     }
     fclose(f);
+}
+
+#define FCOP_KEY "HKEY_LOCAL_MACHINE\\Software\\Electronic Arts\\Future Cop"
+
+static void reg_load_locked(void)
+{
+    RegKey *k;
+    if (reg_loaded) return;
+    reg_loaded = 1;
+    /* the game's installer creates its key; the game only opens it */
+    k = reg_get_or_create_key_locked(FCOP_KEY);
+    reg_read_file_locked();
+    /* the installer also chose the renderer: offer OpenGL (THRASH, thrash_gl.c) unless the
+       player set Group to "Software". The game only reads these values. */
+    if (!reg_find_value_locked(FCOP_KEY, "Group")) reg_set_value_locked(k, "Group", 1, (const u8 *)"OpenGL", 7);
+    if (!reg_find_value_locked(FCOP_KEY, "Thrash Driver")) reg_set_value_locked(k, "Thrash Driver", 1, (const u8 *)"opengl", 7);
+}
+
+int thrash_wanted(void)
+{
+    const char *env = getenv("FCOP_RENDERER");
+    RegValue *v;
+    int r;
+    if (env && *env) return strcasecmp(env, "software") != 0;
+    pthread_mutex_lock(&reg_mutex);
+    reg_load_locked();
+    v = reg_find_value_locked(FCOP_KEY, "Group");
+    r = !v || v->data_len < 8 || strncasecmp((const char *)v->data, "Software", 8) != 0;
+    pthread_mutex_unlock(&reg_mutex);
+    return r;
 }
 
 /* LONG RegOpenKeyExA(HKEY hKey, LPCSTR lpSubKey, DWORD ulOptions, REGSAM samDesired, PHKEY phkResult) */
@@ -640,6 +667,14 @@ static u32 imp_RegQueryValueExA(Cpu *c)
     pthread_mutex_lock(&reg_mutex);
     reg_load_locked();
     RegValue *val = reg_find_value_locked(path, vname);
+    RegValue forced;
+    if (!strcasecmp(path, FCOP_KEY) && !strcasecmp(vname, "Group") && getenv("FCOP_RENDERER")) {
+        int gl = strcasecmp(getenv("FCOP_RENDERER"), "software") != 0;  /* FCOP_RENDERER overrides the registry */
+        forced.type = 1;
+        forced.data = (u8 *)(gl ? "OpenGL" : "Software");
+        forced.data_len = gl ? 7 : 9;
+        val = &forced;
+    }
     if (!val) {
         pthread_mutex_unlock(&reg_mutex);
         return 2; /* ERROR_FILE_NOT_FOUND */

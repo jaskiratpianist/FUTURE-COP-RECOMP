@@ -169,6 +169,12 @@ own test run (`plat_test.py` is headless; `--png`, `--audio`, `--input`).
   volumes...). The installer used to create the key; gdi_misc.c creates it now. The game saves
   them **when it exits normally** (plat_test's kill skips that: quit with
   `click@156,306` + `Return` in the input script). `FCOP_TRACE_REG=1` logs registry calls.
+- Renderer: REG_SZ `Group` under HKLM\Software\Electronic Arts\Future Cop (not Settings):
+  `OpenGL` (default, written by gdi_misc.c when missing, with `Thrash Driver` = `opengl`) runs
+  missions through the game's THRASH driver interface on OpenGL (thrash_gl.c,
+  docs/THRASH_NOTES.md); `Software` keeps the game's software renderer. Env
+  `FCOP_RENDERER=software|opengl` overrides it; `FCOP_GL_FAIL=1` makes OpenGL start-up fail on
+  purpose (the game then falls back to software by itself).
 - Key bindings: `controls.txt` in the game folder, written **as soon as Controller
   Configuration closes with OK** (tests that rebind keys change the player's real bindings:
   back the file up and restore it). In memory: 14 (device, key) pairs per player at
