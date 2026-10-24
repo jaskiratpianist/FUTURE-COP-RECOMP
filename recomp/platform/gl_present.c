@@ -62,7 +62,15 @@ void plat_log(const char *fmt, ...);
     X(void, UseProgram, (GLuint)) \
     X(GLint, GetUniformLocation, (GLuint, const GLchar *)) \
     X(void, Uniform1i, (GLint, GLint)) \
-    X(void, Uniform2f, (GLint, GLfloat, GLfloat))
+    X(void, Uniform2f, (GLint, GLfloat, GLfloat)) \
+    X(void, GenFramebuffers, (GLsizei, GLuint *)) \
+    X(void, BindFramebuffer, (GLenum, GLuint)) \
+    X(void, FramebufferRenderbuffer, (GLenum, GLenum, GLenum, GLuint)) \
+    X(void, GenRenderbuffers, (GLsizei, GLuint *)) \
+    X(void, BindRenderbuffer, (GLenum, GLuint)) \
+    X(void, RenderbufferStorage, (GLenum, GLenum, GLsizei, GLsizei)) \
+    X(GLenum, CheckFramebufferStatus, (GLenum)) \
+    X(void, BlitFramebuffer, (GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLbitfield, GLenum))
 
 #define GLP_DECL(ret, name, args) ret (APIENTRY *name) args;
 static struct { GLP_FUNCS(GLP_DECL) } gl;
@@ -77,6 +85,11 @@ static SDL_threadID glp_thread;
 static GLuint prog, vao, vbo, frame_tex;
 static GLint u_size, u_use_tex;
 static int game_w = 640, game_h = 480;
+/* everything is drawn into an offscreen framebuffer of the drawable's size (readable even when
+   the window is hidden, for FCOP_SHOT) and copied to the window on swap */
+static GLuint fbo, rb_color, rb_depth;
+static int fbo_w, fbo_h;
+static int vp[4];  /* the 4:3 viewport inside it */
 
 static const char *vs_src =
     "#version 330 core\n"
@@ -193,17 +206,40 @@ static void check_thread(void)
     }
 }
 
+static void fbo_resize(int w, int h)
+{
+    if (!fbo) {
+        gl.GenFramebuffers(1, &fbo);
+        gl.GenRenderbuffers(1, &rb_color);
+        gl.GenRenderbuffers(1, &rb_depth);
+    }
+    gl.BindRenderbuffer(GL_RENDERBUFFER, rb_color);
+    gl.RenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, w, h);
+    gl.BindRenderbuffer(GL_RENDERBUFFER, rb_depth);
+    gl.RenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT24, w, h);
+    gl.BindFramebuffer(GL_FRAMEBUFFER, fbo);
+    gl.FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, rb_color);
+    gl.FramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, rb_depth);
+    if (gl.CheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) plat_log("GL: framebuffer incomplete");
+    fbo_w = w;
+    fbo_h = h;
+}
+
 /* clear the whole drawable to black and set the 4:3 viewport for a game_w x game_h space */
 static void start_drawable(int w, int h)
 {
-    int dw, dh, r[4];
+    int dw, dh;
     check_thread();
     SDL_GL_GetDrawableSize(glp_window, &dw, &dh);
+    if (dw < 1) dw = 1;
+    if (dh < 1) dh = 1;
+    if (dw != fbo_w || dh != fbo_h) fbo_resize(dw, dh);
+    gl.BindFramebuffer(GL_FRAMEBUFFER, fbo);
     gl.Viewport(0, 0, dw, dh);
     gl.ClearColor(0, 0, 0, 1);
     gl.Clear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    glp_viewport_43(dw, dh, r);
-    gl.Viewport(r[0], r[1], r[2], r[3]);
+    glp_viewport_43(dw, dh, vp);
+    gl.Viewport(vp[0], vp[1], vp[2], vp[3]);
     game_w = w;
     game_h = h;
     gl.Uniform2f(u_size, (float)w, (float)h);
@@ -251,9 +287,38 @@ void glp_begin_frame(int w, int h)
     start_drawable(w, h);
 }
 
+/* FCOP_SHOT=path: write each shown frame (the 4:3 picture as drawn) as a PPM */
+static void shot(void)
+{
+    static int n;
+    static uint8_t *buf;
+    static size_t cap;
+    const char *path = getenv("FCOP_SHOT");
+    char name[512];
+    FILE *f;
+    size_t need = (size_t)vp[2] * vp[3] * 3;
+    n++;
+    if (!path) return;
+    if (need > cap && !(buf = realloc(buf, cap = need))) { cap = 0; return; }
+    gl.BindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
+    gl.PixelStorei(GL_PACK_ALIGNMENT, 1);
+    gl.ReadPixels(vp[0], vp[1], vp[2], vp[3], GL_RGB, GL_UNSIGNED_BYTE, buf);
+    snprintf(name, sizeof name, path, n);
+    if (!(f = fopen(name, "wb"))) return;
+    fprintf(f, "P6\n%d %d\n255\n", vp[2], vp[3]);
+    for (int y = vp[3] - 1; y >= 0; y--) fwrite(buf + (size_t)y * vp[2] * 3, 1, (size_t)vp[2] * 3, f);  /* GL rows are bottom-up */
+    fclose(f);
+    if (getenv("FCOP_SHOT_LOG")) plat_log("frame %d presented (%dx%d)", n, vp[2], vp[3]);
+}
+
 void glp_swap(void)
 {
-    if (!glp_ctx) return;
+    if (!glp_ctx || !fbo) return;
+    shot();
+    gl.BindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
+    gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+    gl.BlitFramebuffer(0, 0, fbo_w, fbo_h, 0, 0, fbo_w, fbo_h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
     SDL_GL_SwapWindow(glp_window);
+    gl.BindFramebuffer(GL_FRAMEBUFFER, fbo);
 }
 #endif

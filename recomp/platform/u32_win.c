@@ -255,6 +255,12 @@ static void ensure_window_sdl(struct WinInternal *w)
             width, height,
             SDL_WINDOW_HIDDEN | SDL_WINDOW_RESIZABLE | (gl ? SDL_WINDOW_OPENGL : 0)
         );
+        if (!w->win.sdl && gl) {  /* no OpenGL at all: a plain window, software renderer */
+            plat_log("OpenGL window failed (%s): software renderer", SDL_GetError());
+            gl = 0;
+            w->win.sdl = SDL_CreateWindow("Future Cop: L.A.P.D.", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED,
+                                          width, height, SDL_WINDOW_HIDDEN | SDL_WINDOW_RESIZABLE);
+        }
         if (w->win.sdl && gl && !glp_init(w->win.sdl))
             plat_log("OpenGL unavailable: software renderer");
         if (!w->win.sdl) {
@@ -1047,7 +1053,7 @@ void win_present(const void *pixels, int w, int h, int pitch_bytes, int bits, u3
 
 void win_show(const void *pixels, int w, int h, int pitch_bytes, int bits, u32 rmask, u32 gmask, u32 bmask)
 {
-    shot(pixels, w, h, pitch_bytes, bits, gmask);
+    if (!glp_active()) shot(pixels, w, h, pitch_bytes, bits, gmask);  /* in OpenGL mode gl_present.c writes the shots */
     if (!main_win) return;
     struct WinInternal *win_int = (struct WinInternal *)main_win;
     ensure_window_sdl(win_int);
@@ -1073,7 +1079,7 @@ void win_show(const void *pixels, int w, int h, int pitch_bytes, int bits, u32 r
         }
     }
 
-    if (!win_int->win.visible) {
+    if (!win_int->win.visible && !getenv("FCOP_HIDDEN")) {  /* FCOP_HIDDEN: headless tests with a real GL window */
         SDL_ShowWindow(win_int->win.sdl);
         win_int->win.visible = 1;
     }
@@ -1386,7 +1392,7 @@ static u32 imp_ShowWindow(Cpu *c)
         if (w->win.sdl) SDL_HideWindow(w->win.sdl);
         w->win.visible = 0;
     } else {
-        if (w->win.sdl) SDL_ShowWindow(w->win.sdl);
+        if (w->win.sdl && !getenv("FCOP_HIDDEN")) SDL_ShowWindow(w->win.sdl);
         w->win.visible = 1;
         if (!w->activated) {
             w->activated = 1;
@@ -1429,7 +1435,7 @@ static u32 imp_SetWindowPos(Cpu *c)
     }
     if (flags & SWP_SHOWWINDOW) {
         ensure_window_sdl(w);
-        if (w->win.sdl) SDL_ShowWindow(w->win.sdl);
+        if (w->win.sdl && !getenv("FCOP_HIDDEN")) SDL_ShowWindow(w->win.sdl);
         w->win.visible = 1;
     }
     if (flags & SWP_HIDEWINDOW) {

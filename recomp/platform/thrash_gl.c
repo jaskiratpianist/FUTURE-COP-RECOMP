@@ -42,7 +42,19 @@ static u32 imp_about(Cpu *c)
         wr32(about_p + 0x00, 0x4c47504f);  /* 'OPGL'; must not be 'XFD3' (the game's 3Dfx flag) */
         wr32(about_p + 0x04, 0x80);
         wr32(about_p + 0x08, 0x68);        /* interface version the game requires */
-        wr32(about_p + 0x3c, 0);           /* no extra display modes */
+        /* display modes the driver offers: entries 1..n of 0x28 bytes {w, h, bpp}; the game
+           enables the matching entries of its resolution list (widths >= 512 only). No
+           1600x1200: its HUD scaling is broken (CLAUDE.md). */
+        static const int modes[][2] = { {512, 384}, {640, 480}, {800, 600}, {960, 720}, {1024, 768}, {1120, 840}, {1280, 960} };
+        int n = sizeof modes / sizeof modes[0];
+        u32 list = galloc(0x28 * (n + 1));
+        for (int k = 0; k < n; k++) {
+            wr32(list + 0x28 * (k + 1) + 0, modes[k][0]);
+            wr32(list + 0x28 * (k + 1) + 4, modes[k][1]);
+            wr32(list + 0x28 * (k + 1) + 8, 16);
+        }
+        wr32(about_p + 0x3c, n);
+        wr32(about_p + 0x40, list);
         gstrcpy(about_p + 0x4c, "OpenGL 3.3 (native)", 0x30);
     }
     return about_p;

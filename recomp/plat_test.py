@@ -53,7 +53,10 @@ if a.input:
 if not a.videos:
     env["FCOP_SKIP_VIDEOS"] = "1"
 if not a.show:
-    env["SDL_VIDEODRIVER"] = "offscreen"  # no window on the desktop; frames still go to --png
+    if env.get("FCOP_RENDERER", "").lower() == "software":
+        env["SDL_VIDEODRIVER"] = "offscreen"  # no window on the desktop; frames still go to --png
+    else:  # OpenGL needs a real (hidden) window: a desktop session, nothing appears on screen
+        env["FCOP_HIDDEN"] = "1"
 if a.audio:
     env["SDL_AUDIODRIVER"] = "disk"
     env["SDL_DISKAUDIOFILE"] = a.audio
