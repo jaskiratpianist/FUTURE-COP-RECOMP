@@ -46,6 +46,9 @@ recomp/platform/      Win32/DirectX on SDL2: core.c (memory, thunks, handles, CO
                       host.h (rules for import code), win.h (shared window/input state),
                       k32_*.c u32_*.c gdi_misc.c ddraw.c dinput.c dsound.c,
                       os_win.c/h (Windows host: VirtualAlloc, setenv, fsync for MinGW)
+recomp/platform/thrash_gl.c   the THRASH 3D driver on OpenGL (LoadLibraryA/GetProcAddress hooks in k32_proc.c)
+recomp/platform/gl_present.c  OpenGL backend: context, offscreen framebuffer, batching, 16-bit frames
+recomp/test_*.c       unit tests for gl_present.c / thrash_tex.c helpers (build line at the top of each)
 recomp/build.sh       generate + compile + link -> build/recomp/fcop
 recomp/plat_test.py   build and run the game briefly, print the log tail (the one command Gemini may run)
 recomp/plat_agy.py    hand one platform file to a Gemini worker (assignments are in this file)
@@ -169,6 +172,12 @@ own test run (`plat_test.py` is headless; `--png`, `--audio`, `--input`).
   volumes...). The installer used to create the key; gdi_misc.c creates it now. The game saves
   them **when it exits normally** (plat_test's kill skips that: quit with
   `click@156,306` + `Return` in the input script). `FCOP_TRACE_REG=1` logs registry calls.
+- OpenGL mode shows everything through one GL 3.3 context (menus and videos as 16-bit frames,
+  missions as THRASH triangles); drawing goes to an offscreen framebuffer, so `FCOP_SHOT`
+  shots are what GL drew. plat_test.py uses a hidden real window then (`FCOP_HIDDEN=1`, needs
+  a desktop session); with `FCOP_RENDERER=software` it keeps SDL's offscreen driver.
+  `FCOP_FPS=1` logs frames per second, `FCOP_THRASH_NODRAW=1` skips the GL work (to measure),
+  `FCOP_TEXFILTER=linear|nearest` overrides the game's Filtering checkbox.
 - Renderer: REG_SZ `Group` under HKLM\Software\Electronic Arts\Future Cop (not Settings):
   `OpenGL` (default, written by gdi_misc.c when missing, with `Thrash Driver` = `opengl`) runs
   missions through the game's THRASH driver interface on OpenGL (thrash_gl.c,
@@ -213,20 +222,16 @@ own test run (`plat_test.py` is headless; `--png`, `--audio`, `--input`).
 2. Fix in-game crashes and rendering (expect more stub/offset bugs in Gemini's code;
    review ddraw.c, dsound.c, dinput.c against the DirectX 5 SDK layouts).
 3. Sound through dsound.c and SDL audio; music streaming uses the play/write cursors.
-4. Hardware 3D / high resolution. Findings (2026-10-17): the game draws 3D through EA's
-   **THRASH** driver interface: 34 `_THRASH_*` functions in a driver DLL named by the
-   registry value "Thrash Driver". The CD has them in `game_files/setup/thrash/` (voodooa,
-   voodoo2a (imports glide3x), d3da (Oct 1998, newest), **opengla** (THRASH on OpenGL,
-   loads opengl32 dynamically), softtria/softlina (software), ...), all based at 0x60000000
-   (free in our guest layout) with relocations. The installer copies one into the game
-   folder; ours has none and the game reads only `SoftwareRendering`, so it uses its built-in
-   software renderer and never calls LoadLibraryA for a driver; find what makes it choose
-   hardware (the `Group` value, display caps). The EXE also names the whole Glide 2 API.
-   Two routes: (A) recompile a driver DLL with x86c (needs multi-image support and function
-   discovery for DLLs) and forward opengl32 calls to host GL, scaling the viewport for any
-   resolution; (B) implement the 34 THRASH functions natively on OpenGL, using opengla.dll
-   as the reference for their semantics. B gives the cleanest high-res and texture
-   replacement path; decide with the user.
-5. Open: the pause bar shows black behind it (the game clears the screen), the 565
+4. Done (2026-10-25): **OpenGL renderer** for missions: route B, the game's THRASH driver
+   interface implemented natively (thrash_gl.c, gl_present.c, thrash_tex.c;
+   docs/THRASH_NOTES.md has every call; design and plan in docs/superpowers/). Default on
+   (`Group` = `OpenGL`), software as fallback. 4:3 pillarbox at the real screen resolution,
+   filtered textures; the game itself limits missions to ~37 fps. Next: widescreen (Hor+:
+   the game's projection, culling and HUD layout), the game's frame limit, the Fullscreen
+   option in hardware mode (its Preferences dialog has none), the 2-player HUD offset below,
+   texture replacement by content hash (`thrash_tex_hash`), mipmaps.
+5. Open: the pause bar shows black behind it (the game clears the screen; same in OpenGL),
+   in OpenGL 2-player split screen the right player's HUD numbers sit too far left (software
+   is right; cause unknown, maybe the original hardware path), the 565
    Texture Coloring root cause, gamepads on real hardware, the game's own menu font instead
    of font8x8.
