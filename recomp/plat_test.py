@@ -37,7 +37,7 @@ if os.name == "nt":  # Windows: run from the MSYS2 MinGW shell (build.sh needs s
 else:
     import fcntl
     fcntl.flock(lock, fcntl.LOCK_EX)  # several workers share one build directory: take turns
-b = subprocess.run(["sh", os.path.join(ROOT, "recomp", "build.sh")], cwd=ROOT, capture_output=True, text=True)
+b = subprocess.run(["sh", os.path.join(ROOT, "recomp", "build.sh")], cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace")
 for l in (b.stdout + b.stderr).splitlines():
     if l.startswith("COMPILE ERROR"):
         print("\n".join(x for x in (b.stdout + b.stderr).splitlines() if "error" in x.lower())[:4000])
@@ -66,7 +66,7 @@ if a.png:
     env["FCOP_SHOT"] = os.path.join(shots, "f%05d.ppm")
 try:
     r = subprocess.run([os.path.join(ROOT, "build", "recomp", "fcop.exe" if os.name == "nt" else "fcop"), game_dir()],
-                       cwd=ROOT, capture_output=True, text=True, timeout=a.seconds, env=env)
+                       cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=a.seconds, env=env)
     out, status = r.stdout + r.stderr, f"exited with {r.returncode}"
 except subprocess.TimeoutExpired as e:
     dec = lambda x: x.decode(errors="replace") if isinstance(x, bytes) else x or ""  # str on Windows
