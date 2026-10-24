@@ -338,6 +338,41 @@ void glp_draw(int lines, const struct GlpVertex *v, int n)
     batch_n += n;
 }
 
+/* the 4:3 picture in window coordinates {x, y from the top, w, h}, as start_drawable places it */
+static int picture_rect(double r[4])
+{
+    int ww, wh, dw, dh, d[4];
+    if (!glp_window) return 0;
+    SDL_GetWindowSize(glp_window, &ww, &wh);
+    SDL_GL_GetDrawableSize(glp_window, &dw, &dh);
+    if (ww < 1 || wh < 1 || dw < 1 || dh < 1) return 0;
+    glp_viewport_43(dw, dh, d);
+    r[0] = (double)d[0] * ww / dw;
+    r[1] = (double)(dh - d[1] - d[3]) * wh / dh;  /* GL counts y from the bottom */
+    r[2] = (double)d[2] * ww / dw;
+    r[3] = (double)d[3] * wh / dh;
+    return r[2] > 0 && r[3] > 0;
+}
+
+void glp_window_to_game(int *x, int *y)
+{
+    double r[4];
+    int gx, gy;
+    if (!picture_rect(r)) return;
+    gx = (int)((*x - r[0]) * game_w / r[2]);
+    gy = (int)((*y - r[1]) * game_h / r[3]);
+    *x = gx < 0 ? 0 : gx >= game_w ? game_w - 1 : gx;
+    *y = gy < 0 ? 0 : gy >= game_h ? game_h - 1 : gy;
+}
+
+void glp_game_to_window(int *x, int *y)
+{
+    double r[4];
+    if (!picture_rect(r)) return;
+    *x = (int)(r[0] + (*x + 0.5) * r[2] / game_w);
+    *y = (int)(r[1] + (*y + 0.5) * r[3] / game_h);
+}
+
 int glp_read_frame16(uint16_t *dst, int w, int h)
 {
     static uint8_t *rgb;

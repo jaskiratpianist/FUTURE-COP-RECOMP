@@ -196,16 +196,45 @@ static void ensure_sdl_init(void)
     }
 }
 
+/* Fullscreen is a borderless window over the whole display. On Windows the graphics driver turns
+   an OpenGL window that exactly covers a monitor into exclusive fullscreen (every monitor goes
+   black at each switch, Alt+Tab or Start menu), so there it is 1 pixel taller than the display. */
+static void apply_fullscreen(SDL_Window *s, int on)
+{
+    in_programmatic_resize = 1;
+#ifdef _WIN32
+    static int saved, sx, sy, sw, sh;
+    SDL_Rect b;
+    int display = SDL_GetWindowDisplayIndex(s);
+    if (on && SDL_GetDisplayBounds(display < 0 ? 0 : display, &b) == 0) {
+        if (!saved) {
+            SDL_GetWindowPosition(s, &sx, &sy);
+            SDL_GetWindowSize(s, &sw, &sh);
+            saved = 1;
+        }
+        SDL_SetWindowBordered(s, SDL_FALSE);
+        SDL_SetWindowResizable(s, SDL_FALSE);
+        SDL_SetWindowPosition(s, b.x, b.y);
+        SDL_SetWindowSize(s, b.w, b.h + 1);
+    } else if (!on && saved) {
+        SDL_SetWindowBordered(s, SDL_TRUE);
+        SDL_SetWindowResizable(s, SDL_TRUE);
+        SDL_SetWindowSize(s, sw, sh);
+        SDL_SetWindowPosition(s, sx, sy);
+        saved = 0;
+    }
+#else
+    SDL_SetWindowFullscreen(s, on ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+#endif
+    in_programmatic_resize = 0;
+}
+
 void win_set_fullscreen(int on)
 {
     int new_state = on ? 1 : 0;
     if (fullscreen_state != new_state) {
         fullscreen_state = new_state;
-        if (main_win && main_win->sdl) {
-            in_programmatic_resize = 1;
-            SDL_SetWindowFullscreen(main_win->sdl, fullscreen_state ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
-            in_programmatic_resize = 0;
-        }
+        if (main_win && main_win->sdl) apply_fullscreen(main_win->sdl, fullscreen_state);
         plat_log("fullscreen: %s", fullscreen_state ? "on" : "off");
     }
 }
@@ -266,9 +295,7 @@ static void ensure_window_sdl(struct WinInternal *w)
         if (!w->win.sdl) {
             plat_log("warn: SDL_CreateWindow failed: %s", SDL_GetError());
         } else if (fullscreen_state) {
-            in_programmatic_resize = 1;
-            SDL_SetWindowFullscreen(w->win.sdl, SDL_WINDOW_FULLSCREEN_DESKTOP);
-            in_programmatic_resize = 0;
+            apply_fullscreen(w->win.sdl, 1);
         }
     }
 }
@@ -947,6 +974,15 @@ static void scripted_input(void)
 
 int (*win_event_hook)(const SDL_Event *e);
 
+/* OpenGL mode has no SDL renderer to scale real mouse events to game pixels (scripted input
+   is in game pixels already) */
+static void mouse_to_game(SDL_Event *e)
+{
+    if (!glp_active()) return;
+    if (e->type == SDL_MOUSEMOTION) glp_window_to_game(&e->motion.x, &e->motion.y);
+    else if (e->type == SDL_MOUSEBUTTONDOWN || e->type == SDL_MOUSEBUTTONUP) glp_window_to_game(&e->button.x, &e->button.y);
+}
+
 static void overlay_pump(void);
 
 void plat_pump(void)
@@ -956,6 +992,7 @@ void plat_pump(void)
     SDL_Event e;
     scripted_input();
     while (SDL_PollEvent(&e)) {
+        mouse_to_game(&e);
         if (check_alt_enter(&e)) continue;
         if (call_keyboard_hook(&e)) continue;
         /* a dialog or video may take key presses, but releases always reach the key state:
@@ -1731,6 +1768,7 @@ static u32 imp_GetMessageA(Cpu *c)
         if (sdl_inited) {
             SDL_Event ev;
             if (SDL_WaitEventTimeout(&ev, 10)) {
+                mouse_to_game(&ev);
                 handle_sdl_event(&ev);
             }
         } else {

@@ -9,6 +9,7 @@
 #include <SDL.h>
 #include "host.h"
 #include "win.h"
+#include "gl_present.h"
 
 
 
@@ -101,7 +102,10 @@ static u32 imp_keybd_event(Cpu *c)
 
 static int cursor_display_count = 0;
 
-/* int ShowCursor(BOOL bShow) */
+/* int ShowCursor(BOOL bShow)
+   The game hides the cursor only in fullscreen (every hide is behind its fullscreen flag at
+   0x4a0060), where the original showed none at all. Fullscreen is a window here, so the cursor
+   stays as in windowed mode: the count is kept for the game, the SDL cursor is not hidden. */
 static u32 imp_ShowCursor(Cpu *c)
 {
     int show = (int)ARG(0);
@@ -110,7 +114,6 @@ static u32 imp_ShowCursor(Cpu *c)
     } else {
         cursor_display_count--;
     }
-    SDL_ShowCursor(cursor_display_count >= 0 ? SDL_ENABLE : SDL_DISABLE);
     return (u32)cursor_display_count;
 }
 
@@ -121,11 +124,7 @@ static u32 imp_SetCursor(Cpu *c)
 {
     u32 prev = current_cursor;
     current_cursor = ARG(0);
-    if (current_cursor == 0) {
-        SDL_ShowCursor(SDL_DISABLE);
-    } else {
-        SDL_ShowCursor(cursor_display_count >= 0 ? SDL_ENABLE : SDL_DISABLE);
-    }
+    SDL_ShowCursor(current_cursor ? SDL_ENABLE : SDL_DISABLE);
     return prev;
 }
 
@@ -137,6 +136,7 @@ static u32 imp_SetCursorPos(Cpu *c)
     mouse_x = x;
     mouse_y = y;
     if (main_win && main_win->sdl) {
+        if (glp_active()) glp_game_to_window(&x, &y);
         SDL_WarpMouseInWindow(main_win->sdl, x, y);
     }
     return 1;

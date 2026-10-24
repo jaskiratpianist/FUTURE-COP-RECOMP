@@ -29,6 +29,10 @@ void glp_set_blend(int on, int src, int dst);
 void glp_set_depth_test(int on);     /* LEQUAL */
 void glp_set_cull(int mode);         /* 0 off, 1 front faces clockwise, 2 counter-clockwise */
 void glp_draw(int lines, const struct GlpVertex *v, int n);  /* triangles (n % 3 == 0) or lines */
+/* mouse positions: window coordinates (SDL events) <-> the game coordinates of the last frame
+   (SDL only scales mouse events itself when a renderer has a logical size) */
+void glp_window_to_game(int *x, int *y);
+void glp_game_to_window(int *x, int *y);
 /* the last frame drawn, scaled to w x h as RGB565 (dialogs and the pause bar draw over it) */
 int  glp_read_frame16(uint16_t *dst, int w, int h);
 

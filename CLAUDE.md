@@ -192,7 +192,13 @@ own test run (`plat_test.py` is headless; `--png`, `--audio`, `--input`).
 - Display: menus are always 640x480; the chosen resolution and fullscreen apply in missions.
   Windowed, DirectDraw's primary surface is the whole desktop (we report DESKTOP_W x DESKTOP_H,
   1600x1200, win.h) and only the main window's rectangle is shown. Fullscreen comes from
-  SetCooperativeLevel (SDL fullscreen-desktop, letterboxed); Alt+Enter toggles it.
+  SetCooperativeLevel (letterboxed); Alt+Enter toggles it. On Windows it is a borderless window
+  1 pixel taller than the display (an exact cover lets the driver make an OpenGL window exclusive:
+  all monitors go black at every switch and Alt+Tab); elsewhere SDL fullscreen-desktop. The game
+  hides the cursor only in fullscreen; ShowCursor keeps the count but never hides the SDL cursor.
+- OpenGL mode has no SDL renderer, so SDL does not scale mouse events: real events are mapped
+  from window to game pixels (gl_present.c `glp_window_to_game`); FCOP_INPUT clicks are already
+  in game pixels, so scripted tests cannot catch mistakes here.
 - No 1600x1200 (ddraw.c does not enumerate it): an original game bug. The game keeps HUD/2D
   coordinates in a 2560x1920 virtual space and scales them per resolution index in switches
   that only cover indices 0-9 (320x240 .. 1280x960; e.g. 0x40cd3f, 0x410552); index 10 takes the
