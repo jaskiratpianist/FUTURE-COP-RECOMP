@@ -9,4 +9,5 @@ int os_commit(void *p, size_t n);   /* make it readable and writable; 0 on failu
 int setenv(const char *name, const char *val, int overwrite);
 int unsetenv(const char *name);
 int fsync(int fd);
+void os_prof_start(const char *spec);  /* FCOP_PROF sampling profiler */
 #endif

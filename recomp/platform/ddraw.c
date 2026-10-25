@@ -554,6 +554,14 @@ static u32 imp_dds_AddOverlayDirtyRect(Cpu *c)
 }
 
 /* 5 */
+/* FCOP_DD_LOG, read once (getenv is slow on Windows) */
+static int dd_log(void)
+{
+    static int on = -1;
+    if (on < 0) on = getenv("FCOP_DD_LOG") != NULL;
+    return on;
+}
+
 static u32 imp_dds_Blt(Cpu *c)
 {
     HostSurface *dest = (HostSurface *)com_host(ARG(0));
@@ -564,7 +572,7 @@ static u32 imp_dds_Blt(Cpu *c)
     u32 lpDDBltFx = ARG(5);
 
     if (!dest) return DDERR_INVALIDPARAMS;
-    if (getenv("FCOP_DD_LOG"))
+    if (dd_log())
         plat_log("Blt dest %x (%ux%u primary %d caps %x) src %x flags %x", ARG(0), dest->width, dest->height,
                  dest->is_primary, dest->caps, lpDDSrc, dwFlags);
 
@@ -606,7 +614,7 @@ static u32 imp_dds_Blt(Cpu *c)
     if (!lpDDSrc) return DDERR_INVALIDPARAMS;
     HostSurface *src = (HostSurface *)com_host(lpDDSrc);
     if (!src || !src->pixels || !dest->pixels) {
-        if (getenv("FCOP_DD_LOG")) plat_log("  Blt rejected: src %p pixels %x/%x", (void *)src, src ? src->pixels : 0, dest->pixels);
+        if (dd_log()) plat_log("  Blt rejected: src %p pixels %x/%x", (void *)src, src ? src->pixels : 0, dest->pixels);
         return DDERR_INVALIDPARAMS;
     }
 
@@ -637,7 +645,7 @@ static u32 imp_dds_Blt(Cpu *c)
     if (sy + h > (int)src->height) h = (int)src->height - sy;
 
     if (w <= 0 || h <= 0) {
-        if (getenv("FCOP_DD_LOG")) plat_log("  Blt empty: d %d,%d s %d,%d %dx%d (src %ux%u)", dx, dy, sx, sy, w, h, src->width, src->height);
+        if (dd_log()) plat_log("  Blt empty: d %d,%d s %d,%d %dx%d (src %ux%u)", dx, dy, sx, sy, w, h, src->width, src->height);
         return DD_OK;
     }
 

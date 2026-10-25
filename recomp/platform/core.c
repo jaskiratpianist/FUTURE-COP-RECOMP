@@ -137,6 +137,7 @@ u32 thunk_new(const char *name, int nargs, ImpFn fn)
    thread hands over its turn whenever it calls an import, and at loop heads when another
    thread is waiting (POLL in cpu.h). */
 static unsigned turn_next, turn_now;
+static int trace_api;  /* FCOP_TRACE_API, read once: getenv is slow on Windows (a lock and a scan) */
 static __thread int turn_held;
 
 static void turn_take(void)
@@ -174,7 +175,7 @@ void rt_foreign(Cpu *c, u32 addr)
         plat_log("call to unknown address 0x%08x (esp 0x%08x, return 0x%08x)", addr, c->r[4], rd32(c->r[4]));
         abort();
     }
-    if (getenv("FCOP_TRACE_API")) plat_log("api %s from 0x%08x", thunks[k].name, rd32(c->r[4]));
+    if (trace_api) plat_log("api %s from 0x%08x", thunks[k].name, rd32(c->r[4]));
     if (thunks[k].fn == missing_stub) {
         plat_log("unimplemented import %s (called from 0x%08x)", thunks[k].name, rd32(c->r[4]));
         abort();
@@ -430,6 +431,10 @@ int main(int argc, char **argv)
     host_path("FCopLAPD.exe", exe, sizeof exe);  /* any letter case */
     if (load_exe(exe)) { plat_log("cannot read %s", exe); return 1; }
     fps_init();
+#ifdef _WIN32
+    if (getenv("FCOP_PROF")) os_prof_start(getenv("FCOP_PROF"));
+#endif
+    trace_api = getenv("FCOP_TRACE_API") != NULL;
 
     for (k = 0; k < recomp_imports_n; k++) {
         const struct import_ref *r = &recomp_imports[k];

@@ -124,8 +124,12 @@ static u32 imp_grGammaCorrectionValue(Cpu *c)
 /* texture filter: env FCOP_TEXFILTER (linear/nearest) wins, else the game's choice */
 static int tex_linear(void)
 {
-    const char *e = getenv("FCOP_TEXFILTER");
-    if (e && *e) return strcasecmp(e, "nearest") != 0;
+    static int env = -1;  /* read once: getenv is slow on Windows, and this runs per texture */
+    if (env < 0) {
+        const char *e = getenv("FCOP_TEXFILTER");
+        env = e && *e ? strcasecmp(e, "nearest") != 0 : 2;
+    }
+    if (env < 2) return env;
     return filter_linear;
 }
 

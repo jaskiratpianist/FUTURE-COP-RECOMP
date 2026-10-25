@@ -11,7 +11,7 @@ LIBS="$(sdl2-config --libs) -lm -lpthread"
 case "$(uname -s)" in
 MINGW*|MSYS*)  # Windows (MSYS2 MinGW shell): console program, 16 MB main stack like Linux's 8 MB+
     PY=.venv/Scripts/python.exe
-    LIBS="$(sdl2-config --libs | sed 's/-mwindows//') -lm -lpthread -static-libgcc -Wl,--stack,16777216"
+    LIBS="$(sdl2-config --libs | sed 's/-mwindows//') -lm -lpthread -lwinmm -lpsapi -static-libgcc -Wl,--stack,16777216"
     BIN="$(dirname "$(command -v sdl2-config)")"
     DLL="$BIN/SDL2.dll $BIN/libwinpthread-1.dll" ;;
 esac

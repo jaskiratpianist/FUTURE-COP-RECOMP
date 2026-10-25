@@ -121,6 +121,10 @@ Linux-only (mprotect/signals in harness.c).
   `FCOP_INPUT="9000:click@484,303 28000:Keypad_8*3000"` (scripted input, ms after start: a
   click at game coordinates, preceded by a mouse move, or an SDL key name held 100 ms or *N ms).
   That example starts the first mission from the main menu and walks forward.
+- Profiling (Windows): `FCOP_PROF=25000:15000[:file]` samples the main thread's call stack
+  every ~1.5 ms from 25 s for 15 s and writes `build/prof.txt`; `recomp/prof_report.py <file>`
+  prints self and inclusive time per function. `FCOP_FPS_LIMIT=0` starts without our frame
+  limit (not saved). Above that the game's own 1/300 s tick caps missions at 300 fps.
 - Static facts: `data/functions.json` plus capstone. The generated C has the original
   instruction as a comment on every line (`/* 45b7c6: jmp 0x45ba37 */`), so
   `grep "TR(0x45b7c6u)" build/recomp/gen/*.c` finds any instruction.
@@ -252,6 +256,10 @@ own test run (`plat_test.py` is headless; `--png`, `--audio`, `--input`).
   the reference does not resolve to the strong definition. u32_misc.c had weak copies of
   vk_down/mouse_buttons from the Gemini days, and GetAsyncKeyState read garbage (mouse x as a
   key state: keys stuck down, real presses ignored). Weak *functions* (rt.c) link correctly.
+- Never call `getenv` in a hot path (cache it in a static): MinGW's msvcrt getenv takes a lock
+  and scans the environment. rt_foreign checked FCOP_TRACE_API on every import call and the
+  renderers checked FCOP_TEXFILTER per texture: 76% of the main thread, missions ran at 130
+  instead of 300 fps.
 - Windows: open files with O_BINARY (k32_file.c), or newline translation corrupts game data.
 - Pixel format: ddraw.c gives the game **555** by default. In 565 the software renderer's
   "Texture Coloring" (coloured lighting) comes out wrong (yellow/red floors with green

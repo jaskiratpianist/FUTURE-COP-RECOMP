@@ -130,8 +130,12 @@ static u32 imp_setstate(Cpu *c)
    option (state 7 = 1), as opengla.dll does */
 static int tex_linear(void)
 {
-    const char *e = getenv("FCOP_TEXFILTER");
-    if (e && *e) return strcasecmp(e, "nearest") != 0;
+    static int env = -1;  /* read once: getenv is slow on Windows, and this runs per texture */
+    if (env < 0) {
+        const char *e = getenv("FCOP_TEXFILTER");
+        env = e && *e ? strcasecmp(e, "nearest") != 0 : 2;
+    }
+    if (env < 2) return env;
     return states[7] == 1;
 }
 

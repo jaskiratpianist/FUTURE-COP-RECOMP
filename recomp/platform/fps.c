@@ -39,8 +39,8 @@ int fps_limit_current(void) { return fps_limit; }
    the original limit (not saved) */
 void fps_init(void)
 {
-    const char *e = getenv("FCOP_FRAME_TICKS");
-    int fps = fps_limit_pref();
+    const char *e = getenv("FCOP_FRAME_TICKS"), *l = getenv("FCOP_FPS_LIMIT");
+    int fps = l ? atoi(l) : fps_limit_pref();  /* FCOP_FPS_LIMIT: 0 = none (not saved) */
     fps_unlocked = fps == FPS_ORIGINAL ? 0 : fps;
     fps_limit_apply(e && atoi(e) >= 8 ? FPS_ORIGINAL : fps);
 }

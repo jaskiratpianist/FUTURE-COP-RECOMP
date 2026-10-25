@@ -331,7 +331,9 @@ static void ensure_window_sdl(struct WinInternal *w)
 /* Message Queue Functions */
 void msg_post(u32 hwnd, u32 message, u32 wparam, u32 lparam)
 {
-    if (getenv("FCOP_TRACE_MSG")) plat_log("msg_post hwnd %x msg %x wp %x lp %x", hwnd, message, wparam, lparam);
+    static int trace_msg = -1;
+    if (trace_msg < 0) trace_msg = getenv("FCOP_TRACE_MSG") != NULL;
+    if (trace_msg) plat_log("msg_post hwnd %x msg %x wp %x lp %x", hwnd, message, wparam, lparam);
     pthread_mutex_lock(&msg_lock);
     int next_tail = (msg_tail + 1) % MSG_QUEUE_CAP;
     if (next_tail == msg_head) {
