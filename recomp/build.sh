@@ -12,7 +12,8 @@ case "$(uname -s)" in
 MINGW*|MSYS*)  # Windows (MSYS2 MinGW shell): console program, 16 MB main stack like Linux's 8 MB+
     PY=.venv/Scripts/python.exe
     LIBS="$(sdl2-config --libs | sed 's/-mwindows//') -lm -lpthread -static-libgcc -Wl,--stack,16777216"
-    DLL="$(dirname "$(command -v sdl2-config)")/SDL2.dll" ;;
+    BIN="$(dirname "$(command -v sdl2-config)")"
+    DLL="$BIN/SDL2.dll $BIN/libwinpthread-1.dll" ;;
 esac
 [ -d $B/gen ] && [ $B/gen/table.c -nt recomp/x86c.py ] || $PY -I recomp/x86c.py
 mkdir -p $B/obj_game
@@ -25,5 +26,5 @@ ls $B/gen/*.c recomp/rt/rt.c recomp/platform/*.c | xargs -P "$(nproc)" -I{} sh -
     if gcc $CFLAGS -c {} -o $o.tmp 2> $o.err; then mv $o.tmp $o; else echo "COMPILE ERROR in {}:"; head -20 $o.err; fi'
 OBJS=$(for f in $B/gen/*.c recomp/rt/rt.c recomp/platform/*.c; do echo $B/obj_game/$(basename $f .c).o; done)
 gcc -o $B/fcop $OBJS $LIBS
-[ -z "$DLL" ] || cp -u "$DLL" $B/  # the game finds SDL2.dll next to fcop.exe
+[ -z "$DLL" ] || cp -u $DLL $B/  # the game finds SDL2.dll and the MinGW thread DLL next to fcop.exe
 echo "built $B/fcop"
