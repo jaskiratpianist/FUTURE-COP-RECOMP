@@ -47,6 +47,8 @@ recomp/platform/      Win32/DirectX on SDL2: core.c (memory, thunks, handles, CO
                       k32_*.c u32_*.c gdi_misc.c ddraw.c dinput.c dsound.c,
                       os_win.c/h (Windows host: VirtualAlloc, setenv, fsync for MinGW)
 recomp/platform/thrash_gl.c   the THRASH 3D driver on OpenGL (LoadLibraryA/GetProcAddress hooks in k32_proc.c)
+recomp/platform/glide_gl.c    the game's Glide 2.x renderer on OpenGL (same hooks; glide_tmem.c: texture memory)
+recomp/platform/texconv.c     texture conversion (4444, 1555) and content hash for both GL renderers
 recomp/platform/gl_present.c  OpenGL backend: context, offscreen framebuffer, batching, 16-bit frames
 recomp/test_*.c       unit tests for gl_present.c / texconv.c / glide_tmem.c helpers (build line at the top of each)
 recomp/build.sh       generate + compile + link -> build/recomp/fcop
@@ -181,9 +183,13 @@ own test run (`plat_test.py` is headless; `--png`, `--audio`, `--input`).
 - Renderer: REG_SZ `Group` under HKLM\Software\Electronic Arts\Future Cop (not Settings):
   `OpenGL` (default, written by gdi_misc.c when missing, with `Thrash Driver` = `opengl`) runs
   missions through the game's THRASH driver interface on OpenGL (thrash_gl.c,
-  docs/THRASH_NOTES.md); `Software` keeps the game's software renderer. Env
-  `FCOP_RENDERER=software|opengl` overrides it; `FCOP_GL_FAIL=1` makes OpenGL start-up fail on
-  purpose (the game then falls back to software by itself).
+  docs/THRASH_NOTES.md); `3Dfx` runs the game's built-in Glide 2.x renderer, implemented on
+  OpenGL (glide_gl.c, docs/GLIDE_NOTES.md: 1555 textures, Glide combine modes, chromakey,
+  gamma; Glide frames keep the aspect of the Glide screen, 5:4 at the 1280x960 setting, which
+  the game opens as 1280x1024); `Software` keeps the game's software renderer. Env
+  `FCOP_RENDERER=software|opengl|glide` overrides it; `FCOP_GL_FAIL=1` makes OpenGL start-up
+  fail on purpose (the game then falls back to software by itself). In Glide mode the game
+  offers 640x480..1280x960 without 1120x840 (its own resolution switch, 0x43a490).
 - Key bindings: `controls.txt` in the game folder, written **as soon as Controller
   Configuration closes with OK** (tests that rebind keys change the player's real bindings:
   back the file up and restore it). In memory: 14 (device, key) pairs per player at
@@ -238,6 +244,6 @@ own test run (`plat_test.py` is headless; `--png`, `--audio`, `--input`).
    texture replacement by content hash (`tex_hash`), mipmaps.
 5. Open: the pause bar shows black behind it (the game clears the screen; same in OpenGL),
    in OpenGL 2-player split screen the right player's HUD numbers sit too far left (software
-   is right; cause unknown, maybe the original hardware path), the 565
+   is right; Glide mode shows the same, so it is the game's own hardware-path layout), the 565
    Texture Coloring root cause, gamepads on real hardware, the game's own menu font instead
    of font8x8.
