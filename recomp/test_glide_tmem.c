@@ -34,6 +34,10 @@ int main(void)
           "partial rows: dirty %d", dirty);
     CHECK(gtm_download(GTM_SIZE - 2, 2, 1, tex) == 0, "download past the end accepted");
     CHECK(gtm_texels(GTM_SIZE - 2, 2, 1, &dirty) == NULL, "lookup past the end accepted");
+    /* a download into the texture being drawn from must refresh it at once */
+    CHECK(gtm_overlaps(0x1a0000 + 208 * 512, 48 * 512, 0x1a0000, 0x20000), "partial rows of the current texture");
+    CHECK(!gtm_overlaps(0x20000, 0x20000, 0, 0x20000), "next texture touches the current one");
+    CHECK(!gtm_overlaps(0, 0x20000, 0x20000, 0x20000), "previous texture touches the current one");
     /* Glide blend factors -> gl_present codes (0 ONE, 1 ZERO, 2 SRC_ALPHA, 3 ONE_MINUS_SRC_ALPHA,
        4 DST_ALPHA, 5 ONE_MINUS_DST_ALPHA, 6 SRC_COLOR, 7 DST_COLOR, 8 ONE_MINUS_SRC_COLOR,
        9 ONE_MINUS_DST_COLOR) */

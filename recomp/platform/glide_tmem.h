@@ -17,6 +17,8 @@ int gtm_download_rows(uint32_t addr, int w, int h, int row0, int row1, const uin
 /* the w x h texels at addr, or NULL when out of range; *dirty is 1 the first time after any
    write overlapping them (or the first lookup), then 0 */
 const uint16_t *gtm_texels(uint32_t addr, int w, int h, int *dirty);
+/* 1 when byte ranges [a, a + asize) and [b, b + bsize) share a byte */
+int gtm_overlaps(uint32_t a, uint32_t asize, uint32_t b, uint32_t bsize);
 
 /* a Glide blend factor (grAlphaBlendFunction) as a gl_present code (glp_set_blend); Glide's
    codes 2 and 6 mean DST_COLOR / ONE_MINUS_DST_COLOR as a source factor and SRC_COLOR /

@@ -19,12 +19,14 @@ int gtm_lod_size(int lod) { return lod >= 0 && lod <= 8 ? 256 >> lod : 1; }
 
 static int fits(uint32_t addr, uint32_t size) { return addr <= GTM_SIZE && size <= GTM_SIZE - addr; }
 
+int gtm_overlaps(uint32_t a, uint32_t asize, uint32_t b, uint32_t bsize) { return a < b + bsize && b < a + asize; }
+
 static int write(uint32_t addr, const void *px, uint32_t size)
 {
     if (!fits(addr, size) || (!mem && !(mem = calloc(1, GTM_SIZE)))) return 0;
     memcpy(mem + addr, px, size);
     for (int k = 0; k < nused; k++)
-        if (addr < used[k].addr + used[k].size && used[k].addr < addr + size) used[k].dirty = 1;
+        if (gtm_overlaps(addr, size, used[k].addr, used[k].size)) used[k].dirty = 1;
     return 1;
 }
 

@@ -20,6 +20,8 @@ static int filter_linear = 1, clamp_st = 1;
 static int chroma_on;
 static uint32_t chroma_key;
 static int tex_size = 256;  /* of the texture chosen by grTexSource */
+static u32 cur_addr;        /* that texture's address, and its size (0: none) */
+static int cur_size;
 
 /* one GL texture per texture-memory address the game draws from */
 #define MAX_TEX 512
@@ -55,6 +57,7 @@ static u32 imp_grGlideInit(Cpu *c)
     (void)c;
     for (int k = 0; k < ntex; k++) glp_tex_delete(texs[k].gl);
     ntex = 0;
+    cur_size = 0;
     gtm_reset();
     return 1;
 }
@@ -134,11 +137,60 @@ static int info_size(u32 info)
     return gtm_lod_size((int)rd32(info + 4));
 }
 
+/* select (and convert/upload when its texels changed) the texture at addr; it stays current
+   for later downloads */
+
+static void source(u32 addr, int s)
+{
+    static u8 *rgba;
+    static size_t cap;
+    int k, dirty;
+    const u16 *px;
+    for (k = 0; k < ntex; k++)
+        if (texs[k].addr == addr && texs[k].size == s) break;
+    if (k == ntex) {
+        if (ntex == MAX_TEX) { log_once("out of textures"); return; }
+        texs[k].addr = addr;
+        texs[k].size = s;
+        texs[k].gl = glp_tex_new();
+        texs[k].linear = -1;
+        ntex++;
+    }
+    px = gtm_texels(addr, s, s, &dirty);
+    if (!px) { log_once("texture source out of range"); return; }
+    if (dirty || texs[k].linear != tex_linear() || texs[k].clamp != clamp_st) {
+        size_t need = (size_t)s * s * 4;
+        if (need > cap && !(rgba = realloc(rgba, cap = need))) { cap = 0; return; }
+        tex_1555_to_rgba8(px, rgba, s * s);
+        texs[k].linear = tex_linear();
+        texs[k].clamp = clamp_st;
+        glp_tex_upload(texs[k].gl, s, s, rgba, texs[k].linear, texs[k].clamp);  /* draws batched before keep the old texels */
+    }
+    cur_addr = addr;
+    cur_size = s;
+    tex_size = s;
+    glp_set_texture(texs[k].gl);
+}
+
+static u32 imp_grTexSource(Cpu *c)
+{
+    source(ARG(1), info_size(ARG(3)));
+    return 0;
+}
+
+/* a download into the current texture shows at once, as on a Voodoo (the game animates
+   textures with partial downloads without selecting them again) */
+static void downloaded(u32 addr, u32 bytes)
+{
+    if (cur_size && gtm_overlaps(addr, bytes, cur_addr, 2u * (u32)cur_size * (u32)cur_size)) source(cur_addr, cur_size);
+}
+
 static u32 imp_grTexDownloadMipMap(Cpu *c)
 {
     u32 info = ARG(3);
     int s = info_size(info);
     if (!gtm_download(ARG(1), s, s, (const u16 *)G(rd32(info + 16)))) log_once("texture download out of range");
+    else downloaded(ARG(1), 2u * (u32)s * (u32)s);
     return 0;
 }
 
@@ -148,6 +200,7 @@ static u32 imp_grTexDownloadMipMapLevelPartial(Cpu *c)
 {
     int s = gtm_lod_size((int)ARG(2));
     if (!gtm_download_rows(ARG(1), s, s, (int)ARG(8), (int)ARG(9), (const u16 *)G(ARG(7)))) log_once("partial download out of range");
+    else downloaded(ARG(1) + 2u * (u32)s * ARG(8), 2u * (u32)s * (ARG(9) - ARG(8) + 1));
     return 0;
 }
 
@@ -156,38 +209,7 @@ static u32 imp_grTexDownloadMipMapLevel(Cpu *c)
 {
     int s = gtm_lod_size((int)ARG(2));
     if (!gtm_download(ARG(1), s, s, (const u16 *)G(ARG(7)))) log_once("level download out of range");
-    return 0;
-}
-
-static u32 imp_grTexSource(Cpu *c)
-{
-    static u8 *rgba;
-    static size_t cap;
-    u32 addr = ARG(1);
-    int s = info_size(ARG(3)), k, dirty;
-    const u16 *px;
-    for (k = 0; k < ntex; k++)
-        if (texs[k].addr == addr && texs[k].size == s) break;
-    if (k == ntex) {
-        if (ntex == MAX_TEX) { log_once("out of textures"); return 0; }
-        texs[k].addr = addr;
-        texs[k].size = s;
-        texs[k].gl = glp_tex_new();
-        texs[k].linear = -1;
-        ntex++;
-    }
-    px = gtm_texels(addr, s, s, &dirty);
-    if (!px) { log_once("texture source out of range"); return 0; }
-    if (dirty || texs[k].linear != tex_linear() || texs[k].clamp != clamp_st) {
-        size_t need = (size_t)s * s * 4;
-        if (need > cap && !(rgba = realloc(rgba, cap = need))) { cap = 0; return 0; }
-        tex_1555_to_rgba8(px, rgba, s * s);
-        texs[k].linear = tex_linear();
-        texs[k].clamp = clamp_st;
-        glp_tex_upload(texs[k].gl, s, s, rgba, texs[k].linear, texs[k].clamp);
-    }
-    tex_size = s;
-    glp_set_texture(texs[k].gl);
+    else downloaded(ARG(1), 2u * (u32)s * (u32)s);
     return 0;
 }
 
