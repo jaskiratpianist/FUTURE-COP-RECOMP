@@ -2320,20 +2320,39 @@ static u32 imp_DialogBoxParamA(Cpu *c)
             gres->visible = 0;
             combo_select(gres, gsel);
         }
-        /* our frame rate limit, below the Audio button (same gap as above it); OK applies it */
-        struct Control *rc = find_ctrl_by_id(dlg, RENDERER_COMBO_ID), *cfg = NULL, *audio = NULL;
+        /* our frame rate limit, right below the resolution. The left column is then stacked again
+           with even gaps (as between the Controller and Audio buttons): FPS, Renderer label and
+           combo (spaced like Display Mode and its list), Controller, Audio. OK applies the limit */
+        struct Control *rc = find_ctrl_by_id(dlg, RENDERER_COMBO_ID), *cfg = NULL, *audio = NULL, *dm = NULL;
+        struct Control *res = find_ctrl_by_id(dlg, DISPLAY_COMBO_ID);
+        if (!res) res = find_ctrl_by_id(dlg, 1021);  /* the game's own list (software mode) */
         for (int i = 0; i < dlg->num_controls; i++) {
             const char *t = dlg->controls[i].text;
             if (strstr(t, "ontroller")) cfg = &dlg->controls[i];
             if (strstr(t, "UDIO") || strstr(t, "udio")) audio = &dlg->controls[i];
+            if (strstr(t, "isplay Mode")) dm = &dlg->controls[i];
         }
-        if (rc && cfg && audio && dlg->num_controls < MAX_CONTROLS) {
+        if (rc && label && cfg && audio && res && dm && dlg->num_controls < MAX_CONTROLS) {
             struct Control *p = &dlg->controls[dlg->num_controls];
             int pref = fps_limit_pref();
+            int gap = audio->screen_y - cfg->screen_y - cfg->h;
+            int top = res->screen_y + 22;  /* 22: closed combo height, draw_combobox */
+            /* below anything else under the list too (software mode: "Only supported in a window") */
+            for (int i = 0; i < dlg->num_controls; i++) {
+                struct Control *o = &dlg->controls[i];
+                if (o->visible && o->type != CTRL_COMBOBOX && o->screen_y > res->screen_y
+                    && o->screen_y < label->screen_y && o->screen_x < res->screen_x + res->w
+                    && o->screen_y + o->h > top)
+                    top = o->screen_y + o->h;
+            }
             *p = *rc;
             p->id = FPS_COMBO_ID;
             p->hwnd = dlg->hwnd + (u32)++dlg->num_controls;
-            p->screen_y = audio->screen_y + audio->h + (audio->screen_y - cfg->screen_y - cfg->h);
+            p->screen_y = top + gap;
+            label->screen_y = p->screen_y + 22 + gap;
+            rc->screen_y = label->screen_y + (res->screen_y - dm->screen_y);
+            cfg->screen_y = rc->screen_y + 22 + gap;
+            audio->screen_y = cfg->screen_y + cfg->h + gap;
             p->item_count = 0;
             p->cur_sel = 0;
             for (int k = 0; k < (int)(sizeof fps_items / sizeof fps_items[0]); k++) {
