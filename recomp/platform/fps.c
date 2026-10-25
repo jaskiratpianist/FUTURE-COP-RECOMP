@@ -1,6 +1,8 @@
 /* Frame rate: the game's own mission frame limit, the player's limit (Preferences, F11) and
  * the weapon fire rate that depended on the frame rate. */
 #include <stdlib.h>
+#include <string.h>
+#include <math.h>
 #include <SDL.h>
 #include "host.h"
 #include "renderer.h"
@@ -92,4 +94,102 @@ void F_458ed0(Cpu *c)
     if (gun[k].timer != timer || now - gun[k].due >= 2 * period || now < gun[k].due) gun[k].timer = timer, gun[k].due = now;
     else gun[k].due += period;
     wr32(timer, gun[k].due + period > now ? (u32)(gun[k].due + period - now) : 0);
+}
+
+/* 0x446e00(actor, dt) updates a player robot. Its physics runs in whole 8-tick steps (the
+   original frame): steps = (dt + remainder at actor+0xb6) / 8, the rest stays in +0xb6, and
+   0x442120 moves the robot once per step. Above 37.5 fps most frames have no step or one,
+   so the robot, and the camera that follows it (0x4456a0), judder. Shown instead: the
+   position between the last two steps, by the ticks since the last one (at most one step
+   behind the physics). The real position comes back at the next update, unless the game
+   has moved the robot itself in between. Values: the robot's matrix at +0x2c (3x3, 1.0 =
+   0x10000), its position at +0x50 and the point at +0x5c that the camera reads too. */
+#define LERP_N 15
+static struct {
+    u32 actor, steps;
+    s32 before[LERP_N], step[LERP_N], shown[LERP_N], off[LERP_N];
+} lerp[4];
+
+static int lerp_slot(u32 actor)
+{
+    int k;
+    for (k = 0; k < 3 && lerp[k].actor && lerp[k].actor != actor; k++) {}
+    if (lerp[k].actor != actor) memset(&lerp[k], 0, sizeof lerp[k]), lerp[k].actor = actor;
+    return k;
+}
+
+void G_446e00(Cpu *c);
+void F_446e00(Cpu *c)
+{
+    u32 actor = rd32(c->r[4] + 4);
+    s32 dt = (s32)rd32(c->r[4] + 8);
+    int k = lerp_slot(actor), i;
+    for (i = 0; i < LERP_N; i++) {
+        u32 a = actor + 0x2c + 4 * i;
+        if (lerp[k].off[i] && (s32)rd32(a) == lerp[k].shown[i]) wr32(a, (u32)(lerp[k].shown[i] + lerp[k].off[i]));
+        lerp[k].off[i] = 0;
+        lerp[k].before[i] = (s32)rd32(a);
+    }
+    lerp[k].steps = frame_ticks < 8 && dt > 0 ? (u32)(dt + (rd8(actor + 0xb6) & 7)) >> 3 : ~0u;
+    G_446e00(c);
+}
+
+static s32 cam_dt = -1;  /* ticks of this frame while 0x4456a0 runs */
+
+/* the camera of 0x446e00's robot, after its physics: move the robot to where it is shown */
+void G_4456a0(Cpu *c);
+void F_4456a0(Cpu *c)
+{
+    u32 actor = rd32(c->r[4] + 4);
+    int k = lerp_slot(actor), i;
+    if (lerp[k].steps != ~0u) {
+        s32 left = 8 - (rd8(actor + 0xb6) & 7);  /* ticks until the next step */
+        for (i = 0; i < LERP_N; i++) {
+            u32 a = actor + 0x2c + 4 * i;
+            s32 now = (s32)rd32(a);
+            if (lerp[k].steps) lerp[k].step[i] = (now - lerp[k].before[i]) / (s32)lerp[k].steps;
+            if (lerp[k].step[i] > 0x4000 || lerp[k].step[i] < -0x4000) lerp[k].step[i] = 0;  /* a jump */
+            lerp[k].off[i] = lerp[k].step[i] * left / 8;
+            lerp[k].shown[i] = now - lerp[k].off[i];
+            wr32(a, (u32)lerp[k].shown[i]);
+        }
+        lerp[k].steps = ~0u;
+    }
+    cam_dt = frame_ticks < 8 ? (s32)rd32(c->r[4] + 8) : -1;
+    G_4456a0(c);
+    cam_dt = -1;
+}
+
+/* 0x445eb0(angle, target, n): the camera turns toward the target angle (4096 units a turn) by
+   n times angle = (31 * angle + target) / 32, at least n units. n counts 2-tick units of the
+   frame time (the rest carries over), so at 5 ticks a frame it alternates 2 and 3: the turn
+   jerked. Above 37.5 fps: the same curve for the frame's exact ticks, keeping the fraction
+   the integer angle drops. */
+void G_445eb0(Cpu *c);
+void F_445eb0(Cpu *c)
+{
+    static struct { u32 site; s32 out; double frac; } turn[4];  /* per call site (yaw, pitch) */
+    u32 sp = c->r[4], site = rd32(sp);
+    double exact;
+    int k;
+    s32 cur = (s32)(rd32(sp + 4) & 0xfff), to = (s32)(rd32(sp + 8) & 0xfff), n = (s32)rd32(sp + 12), d, r;
+    if (cam_dt <= 0) { G_445eb0(c); return; }
+    if (cur >= 0x800) cur -= 0x1000;
+    if (to >= 0x800) to -= 0x1000;
+    if (to - cur >= 0x800) cur += 0x1000;
+    else if (cur - to >= 0x800) cur -= 0x1000;
+    d = to - cur;
+    for (k = 0; k < 3 && turn[k].site && turn[k].site != site; k++) {}
+    turn[k].site = site;
+    exact = turn[k].out == cur ? cur + turn[k].frac : cur;  /* our own result: keep its fraction */
+    exact = to - (to - exact) * pow(31.0 / 32.0, cam_dt / 2.0);
+    r = (s32)floor(exact + 0.5);
+    if (r == cur && d && n > 0) {  /* the game's minimum step */
+        r = cur + (d > 0 ? (d < n ? d : n) : (-d < n ? d : -n));
+        exact = r;
+    }
+    turn[k].out = r;
+    turn[k].frac = exact - r;
+    c->r[0] = (u32)r;
+    c->r[4] = sp + 4;  /* ret */
 }
