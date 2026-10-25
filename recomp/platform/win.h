@@ -53,5 +53,8 @@ int win_last_frame(const u16 **px, int *w, int *h, int *is565);
 /* if set, plat_pump offers every SDL event (except SDL_QUIT) to it first; returning 1 consumes
    it (a modal dialog takes the mouse and keyboard). Scripted FCOP_INPUT events go through it too. */
 extern int (*win_event_hook)(const SDL_Event *e);
+/* create window hwnd's SDL window now if needed (it is made lazily) and report whether the
+   OpenGL context runs (Glide opens its screen before the window was ever shown) */
+int win_gl_ready(u32 hwnd);
 
 #endif

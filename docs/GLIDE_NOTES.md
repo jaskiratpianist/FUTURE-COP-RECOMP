@@ -68,8 +68,10 @@ primitive list THRASH and the software renderer get):
   9 -> 0xd (1280x1024), 10 -> 0xe (1600x1200); **0-3 and 8 (1120x840) fail** (the game's own
   switch returns before `grSstWinOpen`), so Glide mode offers 640x480 .. 1280x960 without
   1120x840.
-- The game's coordinate space is its resolution (table at 0x48707c, index 0x511e58), also at
-  index 9: vertices reach y 960, the 1280x1024 Glide screen just has 64 unused lines.
+- The game's coordinate space is the Glide screen it opened. At index 9 that is 1280x1024:
+  the HUD is laid out for 1024 lines (its bottom row sits below y 960) and the 3D view fills
+  the whole screen. So the port draws each Glide frame in the aspect of that screen with square
+  pixels (5:4 at 1280x1024, 4:3 for the others).
 
 ## Vertices (GrVertex, 60 bytes)
 

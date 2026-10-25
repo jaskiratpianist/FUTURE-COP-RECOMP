@@ -57,3 +57,17 @@ const uint16_t *gtm_texels(uint32_t addr, int w, int h, int *dirty)
     used[k].dirty = 0;
     return (const uint16_t *)(mem + addr);
 }
+
+int glide_blend_to_glp(int f, int is_dst)
+{
+    switch (f) {
+    case 0: return 1;                  /* ZERO */
+    case 1: return 2;                  /* SRC_ALPHA */
+    case 2: return is_dst ? 6 : 7;     /* SRC_COLOR / DST_COLOR */
+    case 3: return 4;                  /* DST_ALPHA */
+    case 5: return 3;                  /* ONE_MINUS_SRC_ALPHA */
+    case 6: return is_dst ? 8 : 9;     /* ONE_MINUS_SRC_COLOR / ONE_MINUS_DST_COLOR */
+    case 7: return 5;                  /* ONE_MINUS_DST_ALPHA */
+    default: return 0;                 /* 4 ONE (and ALPHA_SATURATE, approximated) */
+    }
+}

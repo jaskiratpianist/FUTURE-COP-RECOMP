@@ -6,6 +6,7 @@
 #include <string.h>
 #include "host.h"
 #include "thrash.h"
+#include "glide.h"
 #ifdef _WIN32
 #include "os_win.h"
 #endif
@@ -87,6 +88,7 @@ static u32 imp_LoadLibraryA(Cpu *c)
 {
     u32 name_p = ARG(0);
     u32 h = name_p ? thrash_load(GSTR(name_p)) : 0;
+    if (!h && name_p) h = glide_load(GSTR(name_p));
     if (h) return h;
     plat_log("LoadLibraryA('%s') -> NULL", name_p ? GSTR(name_p) : "");
     last_error = 126; /* ERROR_MOD_NOT_FOUND */
@@ -99,6 +101,7 @@ static u32 imp_GetProcAddress(Cpu *c)
     u32 hmod = ARG(0);
     u32 proc_p = ARG(1);
     u32 t = proc_p > 0xffff ? thrash_proc(hmod, GSTR(proc_p)) : 0;
+    if (!t && proc_p > 0xffff) t = glide_proc(hmod, GSTR(proc_p));
     if (t) return t;
     if (proc_p > 0xffff) {
         plat_log("GetProcAddress(0x%x, '%s') -> NULL", hmod, GSTR(proc_p));

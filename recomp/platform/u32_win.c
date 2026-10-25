@@ -1433,6 +1433,13 @@ static u32 imp_DefWindowProcA(Cpu *c)
     }
 }
 
+int win_gl_ready(u32 hwnd)
+{
+    struct WinInternal *w = win_get_internal(hwnd);
+    if (w) ensure_window_sdl(w);
+    return glp_active();
+}
+
 /* BOOL ShowWindow(HWND hWnd, int nCmdShow) */
 static u32 imp_ShowWindow(Cpu *c)
 {

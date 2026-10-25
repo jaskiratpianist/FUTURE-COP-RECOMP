@@ -14,14 +14,14 @@ void tex_4444_to_rgba8(const uint16_t *src, uint8_t *dst, int n)
 
 static uint8_t five_to_eight(unsigned x) { return (uint8_t)(x << 3 | x >> 2); }
 
-void tex_1555_to_rgba8(const uint16_t *src, uint8_t *dst, int n, int key_on, uint16_t key)
+void tex_1555_to_rgba8(const uint16_t *src, uint8_t *dst, int n)
 {
     for (long k = 0; k < n; k++) {
         uint16_t p = src[k];
         dst[4 * k + 0] = five_to_eight((p >> 10) & 31);
         dst[4 * k + 1] = five_to_eight((p >> 5) & 31);
         dst[4 * k + 2] = five_to_eight(p & 31);
-        dst[4 * k + 3] = (p & 0x8000) && !(key_on && (p & 0x7fff) == (key & 0x7fff)) ? 0xff : 0;
+        dst[4 * k + 3] = p & 0x8000 ? 0xff : 0;
     }
 }
 

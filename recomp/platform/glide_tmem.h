@@ -18,4 +18,9 @@ int gtm_download_rows(uint32_t addr, int w, int h, int row0, int row1, const uin
    write overlapping them (or the first lookup), then 0 */
 const uint16_t *gtm_texels(uint32_t addr, int w, int h, int *dirty);
 
+/* a Glide blend factor (grAlphaBlendFunction) as a gl_present code (glp_set_blend); Glide's
+   codes 2 and 6 mean DST_COLOR / ONE_MINUS_DST_COLOR as a source factor and SRC_COLOR /
+   ONE_MINUS_SRC_COLOR as a destination factor */
+int glide_blend_to_glp(int glide_factor, int is_dst);
+
 #endif
