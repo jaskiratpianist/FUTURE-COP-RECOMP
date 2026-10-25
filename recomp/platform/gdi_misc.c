@@ -528,19 +528,30 @@ static void reg_load_locked(void)
     if (!reg_find_value_locked(FCOP_KEY, "Thrash Driver")) reg_set_value_locked(k, "Thrash Driver", 1, (const u8 *)"opengl", 7);
 }
 
-int thrash_wanted(void)
+static int renderer_from_env(void)
 {
     const char *env = getenv("FCOP_RENDERER");
+    if (!env || !*env) return -1;
+    if (!strcasecmp(env, "software")) return REND_SOFTWARE;
+    return !strcasecmp(env, "glide") ? REND_GLIDE : REND_OPENGL;
+}
+
+int renderer_wanted(void)
+{
     RegValue *v;
-    int r;
-    if (env && *env) return strcasecmp(env, "software") != 0;
+    int r = renderer_from_env();
+    if (r >= 0) return r;
     pthread_mutex_lock(&reg_mutex);
     reg_load_locked();
     v = reg_find_value_locked(FCOP_KEY, "Group");
-    r = !v || v->data_len < 8 || strncasecmp((const char *)v->data, "Software", 8) != 0;
+    r = REND_OPENGL;
+    if (v && v->data_len >= 8 && !strncasecmp((const char *)v->data, "Software", 8)) r = REND_SOFTWARE;
+    if (v && v->data_len >= 4 && !strncasecmp((const char *)v->data, "3Dfx", 4)) r = REND_GLIDE;
     pthread_mutex_unlock(&reg_mutex);
     return r;
 }
+
+int thrash_wanted(void) { return renderer_wanted() == REND_OPENGL; }
 
 /* LONG RegOpenKeyExA(HKEY hKey, LPCSTR lpSubKey, DWORD ulOptions, REGSAM samDesired, PHKEY phkResult) */
 static u32 imp_RegOpenKeyExA(Cpu *c)
@@ -668,11 +679,11 @@ static u32 imp_RegQueryValueExA(Cpu *c)
     reg_load_locked();
     RegValue *val = reg_find_value_locked(path, vname);
     RegValue forced;
-    if (!strcasecmp(path, FCOP_KEY) && !strcasecmp(vname, "Group") && getenv("FCOP_RENDERER")) {
-        int gl = strcasecmp(getenv("FCOP_RENDERER"), "software") != 0;  /* FCOP_RENDERER overrides the registry */
+    if (!strcasecmp(path, FCOP_KEY) && !strcasecmp(vname, "Group") && renderer_from_env() >= 0) {
+        static const char *const group[] = { "Software", "OpenGL", "3Dfx" };  /* FCOP_RENDERER overrides the registry */
         forced.type = 1;
-        forced.data = (u8 *)(gl ? "OpenGL" : "Software");
-        forced.data_len = gl ? 7 : 9;
+        forced.data = (u8 *)group[renderer_from_env()];
+        forced.data_len = (u32)strlen(group[renderer_from_env()]) + 1;
         val = &forced;
     }
     if (!val) {

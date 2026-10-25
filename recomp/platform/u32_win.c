@@ -270,7 +270,7 @@ static void ensure_window_sdl(struct WinInternal *w)
 
         window_size_for(&width, &height);
 
-        int gl = thrash_wanted();  /* OpenGL renderer: everything is shown through one GL context */
+        int gl = renderer_wanted() != REND_SOFTWARE;  /* OpenGL or Glide: everything is shown through one GL context */
         if (gl) {
             SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
             SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);

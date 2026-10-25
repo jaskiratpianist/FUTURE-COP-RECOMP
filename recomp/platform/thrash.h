@@ -3,10 +3,9 @@
 #ifndef FCOP_THRASH_H
 #define FCOP_THRASH_H
 #include "host.h"
+#include "renderer.h"
 
-/* 1 when the OpenGL renderer should be offered: env FCOP_RENDERER (opengl/software) wins,
-   else the registry value Group under HKLM\Software\Electronic Arts\Future Cop is not
-   "Software" (gdi_misc.c) */
+/* 1 when the OpenGL (THRASH) renderer should be offered: renderer_wanted() == REND_OPENGL (gdi_misc.c) */
 int thrash_wanted(void);
 
 /* LoadLibraryA / GetProcAddress hooks (k32_proc.c): a THRASH driver name ("...a.dll") gives a
