@@ -2245,7 +2245,9 @@ static u32 imp_DialogBoxParamA(Cpu *c)
     }
     if (renderer_changed) {
         renderer_changed = 0;
-        message_box(0, "Renderer change takes effect when you restart Future Cop.", "Renderer", 0 /* MB_OK */);
+        const char *env = getenv("FCOP_RENDERER");
+        message_box(0, env && *env ? "Renderer saved, but the environment variable FCOP_RENDERER overrides it: remove it, then restart Future Cop."
+                                   : "Renderer change takes effect when you restart Future Cop.", "Renderer", 0 /* MB_OK */);
     }
     return res;
 }
