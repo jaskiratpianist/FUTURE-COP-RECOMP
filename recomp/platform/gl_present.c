@@ -623,6 +623,8 @@ void glp_hud(int mode)
     hud_cut[2] = 0;
     if (mode) {
         glp_viewport_43(w, h, vp);  /* also for Glide's 1280x1024: the game stretches 4:3 to it */
+        if (mode == 4) vp[0] = 0;              /* left-aligned */
+        if (mode == 5) vp[0] = w - vp[2];      /* right-aligned */
         if (mode == 2 || mode == 3) {  /* centre the 4:3 HUD's left / right half in that half */
             vp[0] = mode == 2 ? w / 4 - vp[2] / 4 : 3 * w / 4 - 3 * vp[2] / 4;
             hud_cut[0] = mode == 2 ? 0 : w / 2;

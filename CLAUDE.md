@@ -217,8 +217,9 @@ own test run (`plat_test.py` is headless; `--png`, `--audio`, `--input`).
   projections (0x453740 terrain, 0x457340 objects, 0x457140 sprites) and the sphere view tests
   (0x452fd0 terrain cells, 0x4572a0 objects); the renderer stretches 3D over the whole render
   area. The HUD is the display list's depth bucket 0 (node `[0x499ad0]`): the walker wrappers
-  (0x4393e0 Glide, 0x456270 THRASH) draw it in a second call with a 4:3 viewport (`glp_hud`;
-  split screen: each player's half). Target markers (0x435330) and full-height HUD bars are
+  (0x4393e0 Glide, 0x456270 THRASH) draw it in further calls with 4:3 viewports (`glp_hud`):
+  single player left / centre / right groups at the screen edges (`draw_hud_anchored`,
+  `FCOP_HUD_EDGES=0` centres it all), split screen one HUD per player's half. Target markers (0x435330) and full-height HUD bars are
   moved back to 3D positions (`to_screen`). Aspect follows the render size after each present
   (`widescreen_update`). Preferences (hardware mode) replaces the game's 4:3 resolution list
   with ours (0x7E04: desktop + the display's modes, REG_DWORD `PortResolution` = w<<16|h,
@@ -266,8 +267,7 @@ own test run (`plat_test.py` is headless; `--png`, `--audio`, `--input`).
    docs/THRASH_NOTES.md has every call; design and plan in docs/superpowers/). Default on
    (`Group` = `OpenGL`), software as fallback. Widescreen (Hor+) and any display size since
    2026-10-25 (see Lessons), 4:3 pillarbox when turned off,
-   filtered textures; the game's 37.5 fps mission limit is lifted (fps.c; x86c `FRAME_LIMIT`). Players pick a limit in Preferences (our combo 0x7E03 below Audio: original, 60..240, unlimited; REG_DWORD `FpsLimit`, applies on OK; frame_pace() before each present), F11 toggles the original limit, `FCOP_FRAME_TICKS=8` starts with it. The game scales movement by frame time, but player weapons fired once per frame: fps.c wraps 0x458ed0 to keep the original fire rate (x86c `WRAPPED`). Watch for other per-frame effects (enemy fire, damage over time). Next: HUD elements anchored to
-   the screen edges in widescreen (now in the 4:3 centre), the 2-player HUD offset below,
+   filtered textures; the game's 37.5 fps mission limit is lifted (fps.c; x86c `FRAME_LIMIT`). Players pick a limit in Preferences (our combo 0x7E03 below Audio: original, 60..240, unlimited; REG_DWORD `FpsLimit`, applies on OK; frame_pace() before each present), F11 toggles the original limit, `FCOP_FRAME_TICKS=8` starts with it. The game scales movement by frame time, but player weapons fired once per frame: fps.c wraps 0x458ed0 to keep the original fire rate (x86c `WRAPPED`). Watch for other per-frame effects (enemy fire, damage over time). Next: the 2-player HUD offset below,
    texture replacement by content hash (`tex_hash`), mipmaps.
 5. Open: the pause bar shows black behind it (the game clears the screen; same in OpenGL),
    in OpenGL 2-player split screen the right player's HUD numbers sit too far left (software

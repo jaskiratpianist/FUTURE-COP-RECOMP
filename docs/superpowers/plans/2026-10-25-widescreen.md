@@ -85,4 +85,11 @@ undistorted. Both hardware renderers (OpenGL/THRASH and 3Dfx/Glide). Menus and v
 7. [x] Clean-up (one `to_screen` for markers and bars; type-6 pixel units from the game's
    resolution), CLAUDE.md, docs/THRASH_NOTES.md and GLIDE_NOTES.md updated. `FCOP_WIDE` stays
    as a test switch.
-8. [ ] Optional: HUD elements anchored to the screen edges instead of the 4:3 centre.
+8. [x] HUD at the screen edges (single player): `draw_hud_anchored` splits bucket 0 into
+   left / centre / right records by the centre of their extent (centre band 1280 +- 160 units)
+   and draws each group with a left-aligned, centred or right-aligned 4:3 viewport
+   (`glp_hud(4|1|5)`). Font glyphs in a row (page 0xd, type 6) are classified together so
+   numbers and words stay whole; records placed by `to_screen` (markers) stay centred.
+   `FCOP_HUD_EDGES=0` keeps the whole HUD centred. Split screen keeps one HUD per half.
+   Tested 16:9: Crime War (OpenGL) left HUD at the left edge; Precinct Assault (Glide) scores
+   and the second bar at the right edge.

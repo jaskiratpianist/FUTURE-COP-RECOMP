@@ -24,7 +24,7 @@ void glp_begin_frame(int game_w, int game_h);
 /* widescreen: with glp_set_wide(1) frames fill the whole drawable (the game draws them
    narrowed, widescreen.c). glp_hud(1) switches to the 4:3 viewport for the HUD, 2 / 3 to the
    left / right player's half of it in split screen (centred in, and cut to, their half of the
-   screen), 0 back to the whole area. */
+   screen), 4 / 5 to the 4:3 viewport at the left / right edge, 0 back to the whole area. */
 void glp_set_wide(int on);
 void glp_hud(int mode);
 /* width / height of the render size, 0 without a GL context */
