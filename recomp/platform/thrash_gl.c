@@ -255,6 +255,7 @@ static u32 imp_pageflip(Cpu *c)
     Uint32 now = SDL_GetTicks();
     (void)c;
     begin_if_needed();
+    frame_pace();
     if (!getenv("FCOP_THRASH_NODRAW")) glp_swap();  /* NODRAW: measure the game without the GPU path */
     frame_open = 0;
     thrash_frame_last = 1;

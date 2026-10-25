@@ -429,6 +429,7 @@ int main(int argc, char **argv)
     map(ARENA_LO, ARENA_HI);
     host_path("FCopLAPD.exe", exe, sizeof exe);  /* any letter case */
     if (load_exe(exe)) { plat_log("cannot read %s", exe); return 1; }
+    fps_init();
 
     for (k = 0; k < recomp_imports_n; k++) {
         const struct import_ref *r = &recomp_imports[k];

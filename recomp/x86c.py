@@ -181,6 +181,13 @@ class Gen:
         self.self_modifying()
 
     PATCH_TABLE = 0x48ea20  # FUN_0045b1c0 rewrites code for the 555/565 pixel formats from this table
+    # The mission loop spins until 8 timer ticks (1/300 s each) have passed since the last
+    # frame, so missions run at most 37.5 fps. These instructions hold that 8; core.c
+    # (frame_limit) writes them at start-up.
+    FRAME_LIMIT = (0x406a7f, 0x406b30, 0x4071aa, 0x407278, 0x407295)
+    # Functions the platform layer wraps: the recompiled original is named G_<addr> and the
+    # platform defines F_<addr> (core.c). 0x458ed0 fires a player weapon, once per frame.
+    WRAPPED = {0x458ed0}
 
     def self_modifying(self):
         """Find code bytes the game rewrites at run time. Fields that are exactly an
@@ -196,6 +203,9 @@ class Gen:
                 m = i.operands[0].mem
                 if m.base == 0 and m.index == 0 and 0x401000 <= m.disp < TEXT_END:
                     fields[m.disp] = (i.operands[0].size, None)
+        for a in self.FRAME_LIMIT:  # immediates the platform layer rewrites (not the game)
+            i = allins[a]
+            fields[a + i.imm_offset] = (i.imm_size, None)
         table, at = [], self.PATCH_TABLE
         while self.img.read(at, 1)[0]:
             t = self.img.read(at, 1)[0]
@@ -751,7 +761,8 @@ class Gen:
         used = set(re.findall(r"goto L_([0-9a-f]+);", "\n".join(l for _, l in body if l)))
         if getattr(fn, "dyn", False):
             used.update(f"{a:x}" for a in fn.ins)
-        out = [f"void F_{fn.entry:x}(Cpu *c) /* {fn.name} */", "{", "    REGS;", "    LOAD;"]
+        pre = "G" if fn.entry in self.WRAPPED else "F"
+        out = [f"void {pre}_{fn.entry:x}(Cpu *c) /* {fn.name} */", "{", "    REGS;", "    LOAD;"]
         if not fn.ins:
             out.append(f"    SYNC; rt_trap(c, 0x{fn.entry:x}u, \"no code\");")
         elif fn.entry != min(fn.ins):
@@ -795,6 +806,8 @@ def main():
     with open(os.path.join(OUT, "protos.h"), "w") as h:
         for e in sorted(g.fns):
             h.write(f"void F_{e:x}(Cpu *c);\n")
+            if e in Gen.WRAPPED:
+                h.write(f"void G_{e:x}(Cpu *c);\n")
     with open(os.path.join(OUT, "table.c"), "w") as t:
         t.write("#include \"cpu.h\"\n#include \"protos.h\"\n")
         t.write("const struct { u32 addr; void (*fn)(Cpu *); } recomp_table[] = {\n")

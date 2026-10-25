@@ -72,6 +72,9 @@ extern char game_dir[];
 const char *host_path(const char *guest_path, char *buf, size_t n);
 
 void plat_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+void fps_init(void);            /* fps.c: frame limit at start-up (after the EXE is loaded) */
+void frame_limit_toggle(void);  /* fps.c: F11, original frame limit or the player's */
+void frame_pace(void);          /* fps.c: before each present, wait until the frame is due */
 
 /* per-DLL tables (kernel32.c, user32.c, ...) */
 extern const struct ImpDef imp_k32_proc[], imp_k32_mem[], imp_k32_file[], imp_k32_sync[], imp_u32_win[], imp_u32_misc[], imp_gdi32[], imp_advapi32[],

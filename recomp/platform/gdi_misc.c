@@ -593,6 +593,28 @@ void fullscreen_pref_save(int on)
     pthread_mutex_unlock(&reg_mutex);
 }
 
+int fps_limit_pref(void)
+{
+    RegValue *v;
+    u32 fps = 0;
+    pthread_mutex_lock(&reg_mutex);
+    reg_load_locked();
+    v = reg_find_value_locked(FCOP_KEY, "FpsLimit");
+    if (v && v->data_len >= 4) memcpy(&fps, v->data, 4);
+    pthread_mutex_unlock(&reg_mutex);
+    return fps <= 1000 ? (int)fps : 0;
+}
+
+void fps_limit_pref_save(int fps)
+{
+    u32 d = (u32)fps;
+    pthread_mutex_lock(&reg_mutex);
+    reg_load_locked();
+    reg_set_value_locked(reg_get_or_create_key_locked(FCOP_KEY), "FpsLimit", 4, (const u8 *)&d, 4);
+    reg_save_locked();
+    pthread_mutex_unlock(&reg_mutex);
+}
+
 int renderer_hardware_running(void) { return rd32(0x511f90) != 0; }  /* 1 Glide, 2 THRASH (0x45adb0) */
 
 int thrash_wanted(void) { return renderer_wanted() == REND_OPENGL; }

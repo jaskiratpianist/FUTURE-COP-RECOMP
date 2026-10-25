@@ -24,6 +24,11 @@ static const struct { const char *name; int rend; } renderer_items[3] = {
     { "OpenGL", REND_OPENGL }, { "3Dfx (emulated)", REND_GLIDE }, { "Software", REND_SOFTWARE },
 };
 static int renderer_changed;  /* show the restart note when Preferences closes */
+#define FPS_COMBO_ID 0x7E03u  /* ours: frame rate limit, applies at once on OK */
+static const struct { const char *name; int fps; } fps_items[] = {
+    { "FPS: original", FPS_ORIGINAL }, { "FPS: 60", 60 }, { "FPS: 120", 120 }, { "FPS: 144", 144 },
+    { "FPS: 165", 165 }, { "FPS: 240", 240 }, { "FPS: unlimited", 0 },
+};
 
 #define DLG_HWND_BASE 0x00DA0000u
 #define DLG_HWND_MASK 0xFFFF0000u
@@ -897,6 +902,11 @@ static void trigger_button_click(Cpu *c, struct Dialog *dlg, struct Control *ctr
         if (f && f->check_state != fullscreen_pref()) {
             fullscreen_pref_save(f->check_state);
             win_set_fullscreen(f->check_state);
+        }
+        struct Control *p = find_ctrl_by_id(dlg, FPS_COMBO_ID);
+        if (p && p->cur_sel >= 0 && p->cur_sel < (int)(sizeof fps_items / sizeof fps_items[0])) {
+            fps_limit_pref_save(fps_items[p->cur_sel].fps);
+            fps_limit_apply(fps_items[p->cur_sel].fps);
         }
     }
 
@@ -2234,6 +2244,29 @@ static u32 imp_DialogBoxParamA(Cpu *c)
             f->hwnd = dlg->hwnd + (u32)++dlg->num_controls;
             f->visible = 1;
             f->check_state = fullscreen_pref();
+        }
+        /* our frame rate limit, below the Audio button (same gap as above it); OK applies it */
+        struct Control *rc = find_ctrl_by_id(dlg, RENDERER_COMBO_ID), *cfg = NULL, *audio = NULL;
+        for (int i = 0; i < dlg->num_controls; i++) {
+            const char *t = dlg->controls[i].text;
+            if (strstr(t, "ontroller")) cfg = &dlg->controls[i];
+            if (strstr(t, "UDIO") || strstr(t, "udio")) audio = &dlg->controls[i];
+        }
+        if (rc && cfg && audio && dlg->num_controls < MAX_CONTROLS) {
+            struct Control *p = &dlg->controls[dlg->num_controls];
+            int pref = fps_limit_pref();
+            *p = *rc;
+            p->id = FPS_COMBO_ID;
+            p->hwnd = dlg->hwnd + (u32)++dlg->num_controls;
+            p->screen_y = audio->screen_y + audio->h + (audio->screen_y - cfg->screen_y - cfg->h);
+            p->item_count = 0;
+            p->cur_sel = 0;
+            for (int k = 0; k < (int)(sizeof fps_items / sizeof fps_items[0]); k++) {
+                strncpy(p->items[k].text, fps_items[k].name, sizeof p->items[k].text);
+                p->item_count++;
+                if (fps_items[k].fps == pref) p->cur_sel = k;
+            }
+            combo_select(p, p->cur_sel);
         }
     }
     /* the pause bar's first button is Abort: start on Resume so Enter cannot end the mission */

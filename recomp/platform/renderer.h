@@ -18,5 +18,13 @@ void fullscreen_pref_save(int on);
 /* 1 while the game runs a hardware 3D mode (Glide or THRASH): its own mode value, set at
    start-up (0 when it fell back to software) */
 int renderer_hardware_running(void);
+/* frame rate limit (Preferences, REG_DWORD FpsLimit in registry.txt): FPS_ORIGINAL is the
+   game's own 37.5 fps mission limit, 0 none, else frames per second (missing: none) */
+#define FPS_ORIGINAL 37
+int fps_limit_pref(void);
+void fps_limit_pref_save(int fps);
+/* fps.c: apply a limit now; the one in effect */
+void fps_limit_apply(int fps);
+int fps_limit_current(void);
 
 #endif

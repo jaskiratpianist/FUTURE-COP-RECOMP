@@ -571,6 +571,10 @@ static void check_timers(void)
 
 static int check_alt_enter(const SDL_Event *e)
 {
+    if ((e->type == SDL_KEYDOWN || e->type == SDL_KEYUP) && e->key.keysym.sym == SDLK_F11) {
+        if (e->type == SDL_KEYDOWN && !e->key.repeat) frame_limit_toggle();  /* our key, not the game's */
+        return 1;
+    }
     if (e->type == SDL_KEYDOWN) {
         if ((e->key.keysym.sym == SDLK_RETURN || e->key.keysym.sym == SDLK_KP_ENTER) &&
             ((e->key.keysym.mod & KMOD_ALT) || (SDL_GetModState() & KMOD_ALT) || vk_down[0x12])) {
@@ -1090,6 +1094,7 @@ void win_present(const void *pixels, int w, int h, int pitch_bytes, int bits, u3
 {
     static unsigned frames;
     static Uint32 t0;
+    frame_pace();
     if (getenv("FCOP_FPS")) {  /* frames the game presents per second (software renderer, menus) */
         Uint32 now = SDL_GetTicks();
         frames++;

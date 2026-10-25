@@ -319,6 +319,7 @@ static u32 imp_grBufferSwap(Cpu *c)
     Uint32 now = SDL_GetTicks();
     (void)c;
     begin_if_needed();
+    frame_pace();
     if (!getenv("FCOP_THRASH_NODRAW")) glp_swap();
     frame_open = 0;
     thrash_frame_last = 1;  /* a GL mission frame is on screen (u32_win.c reads it back for dialogs) */

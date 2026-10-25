@@ -246,8 +246,8 @@ own test run (`plat_test.py` is headless; `--png`, `--audio`, `--input`).
    interface implemented natively (thrash_gl.c, gl_present.c, texconv.c;
    docs/THRASH_NOTES.md has every call; design and plan in docs/superpowers/). Default on
    (`Group` = `OpenGL`), software as fallback. 4:3 pillarbox at the real screen resolution,
-   filtered textures; the game itself limits missions to ~37 fps. Next: widescreen (Hor+:
-   the game's projection, culling and HUD layout), the game's frame limit, the 2-player HUD
+   filtered textures; the game's 37.5 fps mission limit is lifted (fps.c; x86c `FRAME_LIMIT`). Players pick a limit in Preferences (our combo 0x7E03 below Audio: original, 60..240, unlimited; REG_DWORD `FpsLimit`, applies on OK; frame_pace() before each present), F11 toggles the original limit, `FCOP_FRAME_TICKS=8` starts with it. The game scales movement by frame time, but player weapons fired once per frame: fps.c wraps 0x458ed0 to keep the original fire rate (x86c `WRAPPED`). Watch for other per-frame effects (enemy fire, damage over time). Next: widescreen (Hor+:
+   the game's projection, culling and HUD layout), the 2-player HUD
    offset below,
    texture replacement by content hash (`tex_hash`), mipmaps.
 5. Open: the pause bar shows black behind it (the game clears the screen; same in OpenGL),
