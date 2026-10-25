@@ -19,6 +19,7 @@
    the game's dialog procedure ignores it; OK saves it (renderer_save), it applies at the next
    start */
 #define RENDERER_COMBO_ID 0x7E01u
+#define FULLSCREEN_BOX_ID 0x7E02u  /* ours too, in hardware mode: applies at once on OK */
 static const struct { const char *name; int rend; } renderer_items[3] = {
     { "OpenGL", REND_OPENGL }, { "3Dfx (emulated)", REND_GLIDE }, { "Software", REND_SOFTWARE },
 };
@@ -891,6 +892,11 @@ static void trigger_button_click(Cpu *c, struct Dialog *dlg, struct Control *ctr
         if (r && r->cur_sel >= 0 && r->cur_sel < 3 && renderer_items[r->cur_sel].rend != renderer_wanted()) {
             renderer_save(renderer_items[r->cur_sel].rend);
             renderer_changed = 1;
+        }
+        struct Control *f = find_ctrl_by_id(dlg, FULLSCREEN_BOX_ID);
+        if (f && f->check_state != fullscreen_pref()) {
+            fullscreen_pref_save(f->check_state);
+            win_set_fullscreen(f->check_state);
         }
     }
 
@@ -2217,6 +2223,17 @@ static u32 imp_DialogBoxParamA(Cpu *c)
             for (int k = 0; k < 3; k++)
                 if (renderer_items[k].rend == renderer_wanted()) r->cur_sel = k;
             combo_select(r, r->cur_sel);
+        }
+        /* in hardware mode the game hides its FullScreen box (and forces fullscreen at start-up):
+           show our own in its place, for the player's choice (fullscreen_pref) */
+        struct Control *fs = find_ctrl_by_id(dlg, 1012);
+        if (fs && renderer_hardware_running() && dlg->num_controls < MAX_CONTROLS) {
+            struct Control *f = &dlg->controls[dlg->num_controls];
+            *f = *fs;
+            f->id = FULLSCREEN_BOX_ID;
+            f->hwnd = dlg->hwnd + (u32)++dlg->num_controls;
+            f->visible = 1;
+            f->check_state = fullscreen_pref();
         }
     }
     /* the pause bar's first button is Abort: start on Resume so Enter cannot end the mission */

@@ -567,6 +567,34 @@ void renderer_save(int r)
     plat_log("renderer: Group = %s (applies at the next start)", group_names[r]);
 }
 
+/* fullscreen in OpenGL/3Dfx mode: our own REG_DWORD PortFullScreen (the game forces its own
+   FullScreen value to 1 in hardware mode and writes it back on exit); missing: the game's
+   Settings\FullScreen, else on */
+int fullscreen_pref(void)
+{
+    RegValue *v;
+    u32 on = 1;
+    pthread_mutex_lock(&reg_mutex);
+    reg_load_locked();
+    v = reg_find_value_locked(FCOP_KEY, "PortFullScreen");
+    if (!v) v = reg_find_value_locked(FCOP_KEY "\\Settings", "FullScreen");
+    if (v && v->data_len >= 4) memcpy(&on, v->data, 4);
+    pthread_mutex_unlock(&reg_mutex);
+    return on != 0;
+}
+
+void fullscreen_pref_save(int on)
+{
+    u32 d = on != 0;
+    pthread_mutex_lock(&reg_mutex);
+    reg_load_locked();
+    reg_set_value_locked(reg_get_or_create_key_locked(FCOP_KEY), "PortFullScreen", 4, (const u8 *)&d, 4);
+    reg_save_locked();
+    pthread_mutex_unlock(&reg_mutex);
+}
+
+int renderer_hardware_running(void) { return rd32(0x511f90) != 0; }  /* 1 Glide, 2 THRASH (0x45adb0) */
+
 int thrash_wanted(void) { return renderer_wanted() == REND_OPENGL; }
 
 /* LONG RegOpenKeyExA(HKEY hKey, LPCSTR lpSubKey, DWORD ulOptions, REGSAM samDesired, PHKEY phkResult) */

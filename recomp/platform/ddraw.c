@@ -10,6 +10,7 @@
 #include <SDL.h>
 #include "host.h"
 #include "win.h"
+#include "renderer.h"
 
 
 /* ---- Return Codes & Constants -------------------------------------------------------- */
@@ -1693,10 +1694,12 @@ static u32 imp_dd_SetCooperativeLevel(Cpu *c)
         dd->hwnd = hWnd;
         dd->coop_flags = dwFlags;
     }
+    /* in OpenGL/3Dfx mode the game's own fullscreen state is forced at start-up and not the
+       player's: their choice (fullscreen_pref) decides the window either way */
     if (dwFlags & 1 /* DDSCL_FULLSCREEN */) {
-        win_set_fullscreen(1);
+        win_set_fullscreen(!renderer_hardware_running() || fullscreen_pref());
     } else if (dwFlags & 8 /* DDSCL_NORMAL */) {
-        win_set_fullscreen(0);
+        win_set_fullscreen(renderer_hardware_running() && fullscreen_pref());
         if (dd && dd->mode_set) {
             dd->width = DESKTOP_W;
             dd->height = DESKTOP_H;

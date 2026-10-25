@@ -202,7 +202,11 @@ own test run (`plat_test.py` is headless; `--png`, `--audio`, `--input`).
 - Display: menus are always 640x480; the chosen resolution and fullscreen apply in missions.
   Windowed, DirectDraw's primary surface is the whole desktop (we report DESKTOP_W x DESKTOP_H,
   1600x1200, win.h) and only the main window's rectangle is shown. Fullscreen comes from
-  SetCooperativeLevel (letterboxed); Alt+Enter toggles it. On Windows it is a borderless window
+  SetCooperativeLevel (letterboxed); Alt+Enter toggles it. In OpenGL/3Dfx mode the game forces
+  its own fullscreen flag at start-up (0x45ae07) and hides its FullScreen box: there the
+  player's choice is our REG_DWORD `PortFullScreen` (Future Cop key; Preferences shows our own
+  box, id 0x7E02; Alt+Enter saves it too), and ddraw.c follows it for every
+  SetCooperativeLevel. On Windows it is a borderless window
   1 pixel taller than the display (an exact cover lets the driver make an OpenGL window exclusive:
   all monitors go black at every switch and Alt+Tab); elsewhere SDL fullscreen-desktop. The game
   hides the cursor only in fullscreen; ShowCursor keeps the count but never hides the SDL cursor.
@@ -243,8 +247,8 @@ own test run (`plat_test.py` is headless; `--png`, `--audio`, `--input`).
    docs/THRASH_NOTES.md has every call; design and plan in docs/superpowers/). Default on
    (`Group` = `OpenGL`), software as fallback. 4:3 pillarbox at the real screen resolution,
    filtered textures; the game itself limits missions to ~37 fps. Next: widescreen (Hor+:
-   the game's projection, culling and HUD layout), the game's frame limit, the Fullscreen
-   option in hardware mode (its Preferences dialog has none), the 2-player HUD offset below,
+   the game's projection, culling and HUD layout), the game's frame limit, the 2-player HUD
+   offset below,
    texture replacement by content hash (`tex_hash`), mipmaps.
 5. Open: the pause bar shows black behind it (the game clears the screen; same in OpenGL),
    in OpenGL 2-player split screen the right player's HUD numbers sit too far left (software

@@ -576,6 +576,7 @@ static int check_alt_enter(const SDL_Event *e)
             ((e->key.keysym.mod & KMOD_ALT) || (SDL_GetModState() & KMOD_ALT) || vk_down[0x12])) {
             alt_enter_active = 1;
             win_set_fullscreen(!fullscreen_state);
+            if (renderer_hardware_running()) fullscreen_pref_save(fullscreen_state);  /* remembered (Preferences shows it) */
             return 1;
         }
     } else if (e->type == SDL_KEYUP) {

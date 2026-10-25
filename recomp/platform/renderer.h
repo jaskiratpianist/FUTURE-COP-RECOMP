@@ -11,5 +11,12 @@ int renderer_wanted(void);
 /* write REND_* as Group to registry.txt (the Preferences dialog's choice); the game reads it
    at start-up, so it applies at the next start */
 void renderer_save(int r);
+/* fullscreen in OpenGL/3Dfx mode, where the game itself always asks for fullscreen: the
+   player's choice (Preferences, Alt+Enter), kept as PortFullScreen in registry.txt */
+int fullscreen_pref(void);
+void fullscreen_pref_save(int on);
+/* 1 while the game runs a hardware 3D mode (Glide or THRASH): its own mode value, set at
+   start-up (0 when it fell back to software) */
+int renderer_hardware_running(void);
 
 #endif
