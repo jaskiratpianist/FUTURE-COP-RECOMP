@@ -117,3 +117,12 @@ x >> 2). `grTexSource(0, addr, 3, &info)` selects the texture by its start addre
 
 `grGammaCorrectionValue(g)`: Glide builds the scanout table out = in^(1/g) for the whole
 picture (HUD included). The game passes 1.25 at the default brightness.
+
+## Compared with OpenGL (THRASH) mode
+
+User's verdict (2026-10-25, side-by-side shots): the dithering-like pattern on textures in
+OpenGL mode is gone in Glide mode and textures look smoother. Cause: THRASH receives the
+textures from the game already reduced to ARGB4444 (dithered, 4 bits per colour); Glide gets
+the game's ARGB1555 (5 bits, the PlayStation's own format). Other differences seen: gamma 1.25
+(brighter), the game's own Glide HUD layout, fainter translucent light cones in Precinct
+Assault (not yet judged).
