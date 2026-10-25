@@ -20,7 +20,7 @@
    start */
 #define RENDERER_COMBO_ID 0x7E01u
 static const struct { const char *name; int rend; } renderer_items[3] = {
-    { "OpenGL", REND_OPENGL }, { "3Dfx (Glide)", REND_GLIDE }, { "Software", REND_SOFTWARE },
+    { "OpenGL", REND_OPENGL }, { "3Dfx (emulated)", REND_GLIDE }, { "Software", REND_SOFTWARE },
 };
 static int renderer_changed;  /* show the restart note when Preferences closes */
 
