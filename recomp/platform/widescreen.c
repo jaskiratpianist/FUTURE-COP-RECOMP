@@ -3,6 +3,7 @@
  * puts the wider view into that screen; the renderer stretches it over the whole drawable and
  * draws the HUD with the 4:3 viewport. docs/superpowers/plans/2026-10-25-widescreen.md. */
 #include <stdlib.h>
+#include <string.h>
 #include "host.h"
 #include "gl_present.h"
 #include "thrash.h"
@@ -164,25 +165,59 @@ void F_435330(Cpu *c)
         if (MEM[r + 4] && !rd32(r)) to_screen(r);  /* +0 holds the depth key until the list is sorted */
 }
 
-/* Single-player HUD at the screen edges: records on the left of the 4:3 HUD are drawn with a
-   left-aligned 4:3 viewport, those on the right right-aligned, the rest centred. Font glyphs in
-   a row (texture page 0xd, type 6) are classified together, so a word or number stays whole;
-   records placed by to_screen stay centred. Returns 0 to draw the HUD in one centred call
-   instead (FCOP_HUD_EDGES=0, or too many records). */
-#define MAX_HUD 2048
-static int draw_hud_anchored(Cpu *c, void (*f)(Cpu *), u32 node0)
+/* ---- drawing the display list ------------------------------------------------------------
+
+   The display list is one linked list of depth buckets, farthest first; bucket 0 (depth key 0:
+   the HUD) comes last, behind its node at [0x499ad0]. The walkers (0x4393e0 Glide, 0x456270
+   THRASH) convert each vertex from 2560x1920 units to the game's resolution through a jump
+   table indexed by the resolution (0x511e58): at 1280x960, x / 2 rounded down. Precise mode
+   points the current index's entry at the walkers' own plain path instead, which passes the
+   units unchanged (records of type 6, text, are in game pixels and stay so); x86c reads the
+   table from guest memory. So every call draws either non-text records (2560x1920 space) or
+   text (game pixels), each with its own coordinate space (glp_set_space).
+
+   Widescreen draws the HUD in further calls with 4:3 viewports (glp_hud): at the screen edges in
+   single player (FCOP_HUD_EDGES=0: centred), one per player's half in split screen.
+
+   In split screen the game draws each player's list in its own call, which starts with control
+   records (type bits 0-2 = 0, from 0x40ca10): 0x10 sets the view's x origin (+0x28, in 640x480
+   units: 0 left, 0x140 right; the walker keeps x * 4 and adds a quarter of that on the plain
+   path, so the game's own text was 320 pixels too far left at 1280x960), 0x08 its extent.
+   Every call gets them, with the origin rescaled for its records. */
+
+struct Walker {
+    void (*f)(Cpu *);
+    void (*begin)(void);
+    u32 table;   /* jump table of the resolution cases */
+    int first;   /* resolution index of its entry 0 */
+    int count;
+    u32 plain;   /* the unscaled path */
+};
+
+int precise_vertices(void)
 {
-    static u32 rec[MAX_HUD], next[MAX_HUD];
-    static signed char side[MAX_HUD];  /* -1 left, 0 centre, 1 right */
-    const char *e = getenv("FCOP_HUD_EDGES");
-    u32 sp = c->r[4];
-    int n = 0;
-    if (e && *e == '0') return 0;
-    for (u32 r = node0; r; r = rd32(r)) {
-        if (n == MAX_HUD) return 0;
-        rec[n] = r;
-        next[n++] = rd32(r);
+    static int on = -1;
+    if (on < 0) {
+        const char *e = getenv("FCOP_PRECISE");
+        on = !(e && *e == '0');
     }
+    return on;
+}
+
+/* the game's resolution in pixels (the space of type-6 records) */
+static void game_px(int *w, int *h)
+{
+    u32 r = rd32(0x511e58);
+    *w = r <= 10 ? (int)rd32(0x487080 + 20 * r) : 1280;
+    *h = r <= 10 ? (int)rd32(0x487084 + 20 * r) : 960;
+    if (*w < 320 || *h < 200) *w = 1280, *h = 960;
+}
+
+/* HUD records -> -1 left, 0 centre, 1 right of the 4:3 HUD, by the centre of their extent.
+   Font glyphs in a row (texture page 0xd, type 6) count as one, so a word or number stays
+   whole; records placed by to_screen stay centred. */
+static void hud_sides(const u32 *rec, signed char *side, int n)
+{
     for (int i = 0; i < n;) {
         int x0, y0, x1, y1, j = i + 1, s0 = 0;
         if (extent(rec[i], &x0, &y0, &x1, &y1)) {
@@ -202,74 +237,140 @@ static int draw_hud_anchored(Cpu *c, void (*f)(Cpu *), u32 node0)
         }
         for (; i < j; i++) side[i] = (signed char)s0;
     }
-    for (int sd = -1; sd <= 1; sd++) {  /* one walker call per side, over its records in order */
-        u32 first = 0, last = 0;
-        for (int i = 0; i < n; i++) {
-            if (side[i] != sd) continue;
-            if (last) wr32(last, rec[i]); else first = rec[i];
-            last = rec[i];
-        }
-        if (!first) continue;
-        wr32(last, 0);
-        c->r[4] = sp;
-        wr32(sp + 4, first);
-        glp_hud(sd < 0 ? 4 : sd > 0 ? 5 : 1);
-        f(c);
-    }
-    for (int i = 0; i < n; i++) wr32(rec[i], next[i]);
-    return 1;
 }
 
-/* The display list is one linked list of depth buckets, farthest first; bucket 0 (depth key 0:
-   the HUD) comes last, behind its node at [0x499ad0]. Draw the list in two calls, the HUD with
-   the 4:3 viewport. f = the game's list walker (0x4393e0 Glide, 0x456270 THRASH).
-   In split screen the game draws each player's list in its own call, which starts with control
-   records (type bits 0-2 = 0, from 0x40ca10): 0x10 sets the view's x origin (+0x28, 640x480
-   units: 0 left, 0x140 right), 0x08 its extent (0x140 a half, 0x280 the whole screen). The HUD
-   call gets them too, and its player's half of the screen. HUD records over the whole height
-   (the divider) belong to the screen, not the HUD (to_screen). */
-static void draw_split(Cpu *c, void (*f)(Cpu *))
+#define MAX_REC 32768
+static u32 rec[MAX_REC], rec_next[MAX_REC];
+static signed char rec_pass[MAX_REC];  /* which pass draws it: 0 3D, 1..3 HUD */
+static u32 ctl[4], ctl_next[4];
+static s16 ctl_x[4];
+static int nctl;
+
+static int unit_clip;  /* a walker call over non-text records in precise mode is running */
+
+/* 0x469d90(x, y, w, h, ..): the THRASH walker's clip rectangle for its own polygon clipper
+   (0x466300), in game pixels (floats); in 2560x1920 units while unit_clip */
+void G_469d90(Cpu *c);
+void F_469d90(Cpu *c)
 {
-    u32 sp = c->r[4], head = rd32(sp + 4), node0 = rd32(0x499ad0), prev = 0, ctl[4], ctl_next[4];
-    int nctl = 0, mode = 1;
-    for (u32 r = head; r && r != node0; r = rd32(r)) {
+    float v[4], save[4];
+    u32 args = c->r[4] + 4;
+    int gw, gh;
+    if (!unit_clip) { G_469d90(c); return; }
+    game_px(&gw, &gh);
+    memcpy(save, G(args), sizeof save);
+    for (int i = 0; i < 4; i++) v[i] = save[i] * (i & 1 ? 1920.0f / gh : 2560.0f / gw);
+    memcpy(G(args), v, sizeof v);
+    G_469d90(c);
+    memcpy(G(args), save, sizeof save);
+}
+
+/* call the walker over the records of one pass (text or not), with the control records in
+   front */
+static void walk(Cpu *c, const struct Walker *w, u32 sp, int n, int pass, int text)
+{
+    u32 first = 0, last = 0;
+    int precise = precise_vertices(), gw, gh;
+    game_px(&gw, &gh);
+    for (int i = 0; i < n; i++) {
+        if (rec_pass[i] != pass || (precise && ((MEM[rec[i] + 4] & 7) == 6) != text)) continue;
+        if (last) wr32(last, rec[i]); else first = rec[i];
+        last = rec[i];
+    }
+    if (!first) return;
+    wr32(last, 0);
+    for (int i = nctl - 1; i >= 0; i--) {
+        wr32(ctl[i], first);
+        first = ctl[i];
+        if (precise && MEM[ctl[i] + 4] & 0x10)
+            wr16(ctl[i] + 0x28, (u16)(s16)(text ? ctl_x[i] * gw / 640 : ctl_x[i] * 4));
+    }
+    if (precise) glp_set_space(text ? gw : 2560, text ? gh : 1920);
+    c->r[4] = sp;  /* the walker's ret popped the return address: each call pushes it back */
+    wr32(sp + 4, first);
+    unit_clip = precise && !text;
+    w->f(c);
+    unit_clip = 0;
+}
+
+static void draw_list(Cpu *c, const struct Walker *w)
+{
+    u32 sp = c->r[4], head = rd32(sp + 4), node0 = rd32(0x499ad0), entry = 0, entry_val = 0;
+    int n = 0, hud = -1, wide = wide_k() != 1.0, precise = precise_vertices(), mode = 1, idx;
+    if (!precise && !wide) { w->f(c); return; }
+    nctl = 0;
+    for (u32 r = head; r; r = rd32(r)) {
         u8 t = MEM[r + 4];
-        if (t && !(t & 7) && nctl < 4) {
-            ctl[nctl++] = r;
-            if (t & 0x10) mode = (s16)rd16(r + 0x28) ? 3 : 2;
-            if (t & 0x08 && (s16)rd16(r + 0x28) >= 0x280) mode = 1;
+        if (r == node0) hud = n;
+        if (!t) continue;  /* bucket nodes */
+        if (!(t & 7)) {
+            if (nctl < 4 && hud < 0) {
+                ctl_x[nctl] = (s16)rd16(r + 0x28);
+                ctl_next[nctl] = rd32(r);
+                ctl[nctl++] = r;
+                if (t & 0x10) mode = (s16)rd16(r + 0x28) ? 3 : 2;
+                if (t & 0x08 && (s16)rd16(r + 0x28) >= 0x280) mode = 1;
+            }
+            continue;
         }
-        prev = r;
+        if (n == MAX_REC) {  /* not expected: draw it the game's way */
+            plat_log("widescreen: display list longer than %d records", MAX_REC);
+            w->f(c);
+            return;
+        }
+        rec[n] = r;
+        rec_next[n] = rd32(r);
+        rec_pass[n++] = hud < 0 ? 0 : 2;
     }
-    if (wide_k() == 1.0 || !prev || !rd32(prev)) { f(c); return; }
+    if (hud < 0) hud = n;
     if (!MEM[0x511f54]) mode = 1;
-    wr32(prev, 0);
-    f(c);
-    wr32(prev, node0);
-    for (u32 r = rd32(node0); r; r = rd32(r)) {  /* full-height bars (the split-screen divider) */
-        int x0, y0, x1, y1;
-        if (extent(r, &x0, &y0, &x1, &y1) && y0 <= 8 && y1 >= 1911) {
-            if (getenv("FCOP_WIDE_LOG")) plat_log("widescreen: full-height HUD record type %02x", MEM[r + 4]);
-            to_screen(r);
+    if (wide) {
+        for (int i = hud; i < n; i++) {  /* full-height bars (the split-screen divider) */
+            int x0, y0, x1, y1;
+            if (extent(rec[i], &x0, &y0, &x1, &y1) && y0 <= 8 && y1 >= 1911) {
+                if (getenv("FCOP_WIDE_LOG")) plat_log("widescreen: full-height HUD record type %02x", MEM[rec[i] + 4]);
+                to_screen(rec[i]);
+            }
+        }
+        if (mode == 1) {
+            const char *e = getenv("FCOP_HUD_EDGES");
+            static signed char side[MAX_REC];
+            if (!(e && *e == '0')) {
+                hud_sides(rec + hud, side, n - hud);
+                for (int i = hud; i < n; i++) rec_pass[i] = (signed char)(2 + side[i - hud]);
+            }
         }
     }
-    for (int i = 0; i < nctl; i++) {  /* chain the control records in front of the HUD */
-        ctl_next[i] = rd32(ctl[i]);
-        wr32(ctl[i], i + 1 < nctl ? ctl[i + 1] : node0);
+    idx = (int)rd32(0x511e58) - w->first;
+    if (precise && idx >= 0 && idx < w->count) {
+        entry = w->table + 4 * (u32)idx;
+        entry_val = rd32(entry);
+        wr32(entry, w->plain);
     }
-    c->r[4] = sp;  /* the walker's ret popped the return address: call it again */
-    if (mode != 1 || !draw_hud_anchored(c, f, node0)) {
-        wr32(sp + 4, nctl ? ctl[0] : node0);
-        glp_hud(mode);
-        f(c);
+    w->begin();
+    for (int pass = 0; pass <= 3; pass++) {
+        /* 0: 3D; HUD: 1 left, 2 centre, 3 right (single player), else 2 */
+        static const int hud_mode[4] = { 0, 4, 1, 5 };
+        if (wide) glp_hud(pass == 0 ? 0 : mode == 1 ? hud_mode[pass] : mode);
+        walk(c, w, sp, n, pass, 0);
+        if (precise) walk(c, w, sp, n, pass, 1);
     }
-    glp_hud(0);
-    for (int i = 0; i < nctl; i++) wr32(ctl[i], ctl_next[i]);
+    if (wide) glp_hud(0);
+    if (precise) glp_set_space(2560, 1920);
+    if (entry) wr32(entry, entry_val);
+    for (int i = 0; i < n; i++) wr32(rec[i], rec_next[i]);
+    for (int i = 0; i < nctl; i++) {
+        wr16(ctl[i] + 0x28, (u16)ctl_x[i]);
+        wr32(ctl[i], ctl_next[i]);
+    }
     wr32(sp + 4, head);
+    c->r[4] = sp + 4;  /* as the walker's ret leaves it */
 }
 
 void G_4393e0(Cpu *c);
-void F_4393e0(Cpu *c) { draw_split(c, G_4393e0); }
-
 void G_456270(Cpu *c);
-void F_456270(Cpu *c) { draw_split(c, G_456270); }
+static const struct Walker glide_walker = { G_4393e0, glide_frame_begin, 0x43a168, 4, 7, 0x4397cd };
+static const struct Walker thrash_walker = { G_456270, thrash_frame_begin, 0x456e00, 0, 11, 0x4566fb };
+
+void F_4393e0(Cpu *c) { draw_list(c, &glide_walker); }
+void F_456270(Cpu *c) { draw_list(c, &thrash_walker); }

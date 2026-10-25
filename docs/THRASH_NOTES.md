@@ -134,9 +134,10 @@ no `clip` calls (the game positions each view's vertices itself).
 - The hardware-mode Preferences dialog shows the driver's modes and a "Filtering" checkbox
   (setstate 7), no Fullscreen checkbox; missions then run windowed unless toggled.
 
-## Widescreen
+## Widescreen and precise vertices
 
-Vertices arrive in the game's resolution (1280x960 at index 9), converted from its 2560x1920
-display list by the walker 0x456270. Widescreen (widescreen.c) narrows the game's view before
-projection and stretches the frame; the HUD is drawn in a second walker call with a 4:3
-viewport. Details: docs/superpowers/plans/2026-10-25-widescreen.md.
+The walker 0x456270 converts the 2560x1920 display list to the game's resolution (1280x960 at
+index 9, rounded). widescreen.c makes it pass the list's own units instead (text stays in game
+pixels, drawn in separate calls), narrows the view before projection for widescreen and draws
+the HUD with 4:3 viewports. The walker clips polygons itself (0x466300) against a rectangle set
+by 0x469d90, which is scaled to match. Details: docs/superpowers/plans/2026-10-25-widescreen.md.

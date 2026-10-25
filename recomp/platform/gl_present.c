@@ -108,6 +108,7 @@ static SDL_threadID glp_thread;
 static GLuint prog, vao, vbo, frame_tex;
 static GLint u_size, u_use_tex, u_glide, u_cc, u_ac, u_const, u_chroma, u_smooth, u_key, u_gamma;
 static int game_w = 640, game_h = 480;
+static int clip_w = 640, clip_h = 480;  /* the space glp_set_clip rectangles are in */
 /* everything is drawn into an offscreen framebuffer (readable even when the window is hidden,
    for FCOP_SHOT) of the render size, and copied (scaled when it differs) to the window on swap */
 static GLuint fbo, rb_color, rb_depth;
@@ -462,7 +463,7 @@ static void flush(void)
     if (!have_valid || want.clip != have.clip || want.cx0 != have.cx0 || want.cy0 != have.cy0 || want.cx1 != have.cx1 ||
         want.cy1 != have.cy1) {
         int r[4] = { 0, 0, fbo_w, fbo_h };
-        if (want.clip) glp_clip_rect(vp, game_w, game_h, want.cx0, want.cy0, want.cx1, want.cy1, r);
+        if (want.clip) glp_clip_rect(vp, clip_w, clip_h, want.cx0, want.cy0, want.cx1, want.cy1, r);
         if (hud_cut[2] > 0) {  /* split-screen HUD: only this player's half */
             int x0 = r[0] > hud_cut[0] ? r[0] : hud_cut[0], x1 = r[0] + r[2] < hud_cut[0] + hud_cut[2] ? r[0] + r[2] : hud_cut[0] + hud_cut[2];
             r[0] = x0;
@@ -644,9 +645,29 @@ void glp_begin_frame(int w, int h)
     if (!glp_ctx) return;
     flush();
     start_drawable(w, h);
+    clip_w = w;
+    clip_h = h;
     glp_hud(0);
     have_valid = 0;
     frame_gamma = 1;
+}
+
+void glp_set_space(int w, int h)
+{
+    if (!glp_ctx || (w == game_w && h == game_h)) return;
+    flush();
+    game_w = w;
+    game_h = h;
+    gl.Uniform2f(u_size, (float)w, (float)h);
+}
+
+void glp_set_clip_space(int w, int h)
+{
+    if (!glp_ctx) return;
+    flush();
+    clip_w = w;
+    clip_h = h;
+    have_valid = 0;
 }
 
 unsigned glp_tex_new(void)

@@ -40,8 +40,11 @@ static void begin_if_needed(void)
     if (frame_open) return;
     frame_open = 1;
     thrash_game_size(&w, &h);
+    if (precise_vertices()) w = 2560, h = 1920;  /* widescreen.c: the display list's own units */
     glp_begin_frame(w, h);
 }
+
+void thrash_frame_begin(void) { begin_if_needed(); }
 
 static void log_once(const char *name)
 {

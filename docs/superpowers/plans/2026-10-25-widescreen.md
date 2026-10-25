@@ -93,3 +93,14 @@ undistorted. Both hardware renderers (OpenGL/THRASH and 3Dfx/Glide). Menus and v
    `FCOP_HUD_EDGES=0` keeps the whole HUD centred. Split screen keeps one HUD per half.
    Tested 16:9: Crime War (OpenGL) left HUD at the left edge; Precinct Assault (Glide) scores
    and the second bar at the right edge.
+
+## Follow-up: vertex precision (done)
+
+The walkers rounded every vertex to the game's resolution (x / 2 at 1280x960). Now the
+resolution's jump-table entry points at the walker's plain path during our calls (0x4566fb
+THRASH, 0x4397cd Glide), so vertices arrive in 2560x1920 units; type-6 text stays in game pixels
+and is drawn in its own call. The control record's origin is rescaled per call (x * 4 for units,
+x * gw / 640 for text), which also fixes the game's split-screen text offset (the plain path adds
+origin / 4). THRASH clips polygons itself against a rectangle from 0x469d90, wrapped to scale it.
+Measured: 42 % of vertex x values are odd 2560 units (impossible before). Tested OpenGL and
+Glide, single and split screen, 16:9 and 4:3.

@@ -21,6 +21,10 @@ void glp_clip_rect(const int vp[4], int game_w, int game_h, int x0, int y0, int 
 void glp_show16(const void *px, int w, int h, int pitch_bytes, uint32_t rmask, uint32_t gmask, uint32_t bmask);
 /* start a THRASH frame in a game coordinate space of game_w x game_h: clear to black */
 void glp_begin_frame(int game_w, int game_h);
+/* within a frame: the coordinate space of the vertices that follow (same picture area) */
+void glp_set_space(int w, int h);
+/* the space glp_set_clip rectangles are given in (default: the frame's space) */
+void glp_set_clip_space(int w, int h);
 /* widescreen: with glp_set_wide(1) frames fill the whole drawable (the game draws them
    narrowed, widescreen.c). glp_hud(1) switches to the 4:3 viewport for the HUD, 2 / 3 to the
    left / right player's half of it in split screen (centred in, and cut to, their half of the

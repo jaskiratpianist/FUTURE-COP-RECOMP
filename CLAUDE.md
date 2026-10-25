@@ -227,6 +227,16 @@ own test run (`plat_test.py` is headless; `--png`, `--audio`, `--input`).
   and adds "Widescreen" (0x7E05, `PortWidescreen`, default on). Fullscreen renders at the
   chosen size into an FBO, scaled to the display (`glp_set_render_size`); a window gets that
   size. `FCOP_WIDE=0` off, `FCOP_WIDE=<aspect>` forces one, `FCOP_WIDE_LOG=1`.
+- Vertex precision (both hardware modes, also 4:3): the walkers used to round every vertex from
+  the list's 2560x1920 units to the game's resolution (1280x960: x / 2). Precise mode
+  (widescreen.c `draw_list`, `FCOP_PRECISE=0` turns it off) points the current resolution's
+  entry of the walker's jump table at its plain path (x86c reads switch tables from guest
+  memory), draws non-text records in 2560x1920 space and type-6 text in game pixels in separate
+  calls (`glp_set_space`), scales THRASH's own clip rectangle (0x469d90) and rescales the
+  split-screen origin per call. Side effects: the right player's numbers in split screen and
+  Glide's text at 1280x1024 now sit where they belong (both were the game's own layout bugs);
+  Glide frames are 4:3 (the 5:4 stretch is gone; clip windows map from screen pixels,
+  `glp_set_clip_space`).
 - Dialog hit tests skip group boxes and static text without SS_NOTIFY (as Windows does): the
   3Dfx options (Filtering, Gamma) sit inside a group box that used to swallow every click.
 - OpenGL mode has no SDL renderer, so SDL does not scale mouse events: real events are mapped
@@ -267,10 +277,9 @@ own test run (`plat_test.py` is headless; `--png`, `--audio`, `--input`).
    docs/THRASH_NOTES.md has every call; design and plan in docs/superpowers/). Default on
    (`Group` = `OpenGL`), software as fallback. Widescreen (Hor+) and any display size since
    2026-10-25 (see Lessons), 4:3 pillarbox when turned off,
-   filtered textures; the game's 37.5 fps mission limit is lifted (fps.c; x86c `FRAME_LIMIT`). Players pick a limit in Preferences (our combo 0x7E03 below Audio: original, 60..240, unlimited; REG_DWORD `FpsLimit`, applies on OK; frame_pace() before each present), F11 toggles the original limit, `FCOP_FRAME_TICKS=8` starts with it. The game scales movement by frame time, but player weapons fired once per frame: fps.c wraps 0x458ed0 to keep the original fire rate (x86c `WRAPPED`). Watch for other per-frame effects (enemy fire, damage over time). Next: the 2-player HUD offset below,
+   filtered textures; the game's 37.5 fps mission limit is lifted (fps.c; x86c `FRAME_LIMIT`). Players pick a limit in Preferences (our combo 0x7E03 below Audio: original, 60..240, unlimited; REG_DWORD `FpsLimit`, applies on OK; frame_pace() before each present), F11 toggles the original limit, `FCOP_FRAME_TICKS=8` starts with it. The game scales movement by frame time, but player weapons fired once per frame: fps.c wraps 0x458ed0 to keep the original fire rate (x86c `WRAPPED`). Watch for other per-frame effects (enemy fire, damage over time). Next:
    texture replacement by content hash (`tex_hash`), mipmaps.
 5. Open: the pause bar shows black behind it (the game clears the screen; same in OpenGL),
-   in OpenGL 2-player split screen the right player's HUD numbers sit too far left (software
-   is right; Glide mode shows the same, so it is the game's own hardware-path layout), the 565
+   the 565
    Texture Coloring root cause, gamepads on real hardware, the game's own menu font instead
    of font8x8.

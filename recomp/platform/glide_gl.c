@@ -36,9 +36,16 @@ static void begin_if_needed(void)
 {
     if (frame_open) return;
     frame_open = 1;
-    glp_begin_frame(screen_w, screen_h);
+    if (precise_vertices()) {  /* widescreen.c: the display list's own 4:3 units; clip windows stay in screen pixels */
+        glp_begin_frame(2560, 1920);
+        glp_set_clip_space(screen_w, screen_h);
+    } else {
+        glp_begin_frame(screen_w, screen_h);
+    }
     glp_set_gamma(gamma_value);
 }
+
+void glide_frame_begin(void) { begin_if_needed(); }
 
 static void log_once(const char *what)
 {
