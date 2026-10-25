@@ -300,12 +300,16 @@ u32 thrash_load(const char *dll_name)
 
 u32 thrash_proc(u32 module, const char *name)
 {
+    /* the game looks every function up again at each mission start: one thunk each, made once */
+    static u32 thunks[sizeof thrash_funcs / sizeof thrash_funcs[0]];
     if (module != THRASH_MODULE || strncmp(name, "_THRASH_", 8)) return 0;
     name += 8;
     for (unsigned k = 0; k < sizeof thrash_funcs / sizeof thrash_funcs[0]; k++) {
         size_t l = strlen(thrash_funcs[k].name);
-        if (!strncmp(name, thrash_funcs[k].name, l) && (name[l] == '@' || !name[l]))
-            return thunk_new(thrash_funcs[k].name, thrash_funcs[k].nargs, thrash_funcs[k].fn);
+        if (!strncmp(name, thrash_funcs[k].name, l) && (name[l] == '@' || !name[l])) {
+            if (!thunks[k]) thunks[k] = thunk_new(thrash_funcs[k].name, thrash_funcs[k].nargs, thrash_funcs[k].fn);
+            return thunks[k];
+        }
     }
     return 0;
 }

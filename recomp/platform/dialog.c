@@ -118,7 +118,7 @@ struct Dialog {
 static struct Dialog dlg_stack[MAX_OPEN_DLGS];
 static int dlg_stack_depth = 0;
 
-static u16 draw_buf[1024 * 768];
+static u16 draw_buf[DESKTOP_W * DESKTOP_H];  /* as large as any frame win_last_frame returns */
 /* set when a notify static (a controller key box) was clicked: the game then waits for a key
    through its keyboard hook, so the next key press goes to the game, not to dialog navigation */
 static int key_capture;
