@@ -108,11 +108,13 @@ static SDL_threadID glp_thread;
 static GLuint prog, vao, vbo, frame_tex;
 static GLint u_size, u_use_tex, u_glide, u_cc, u_ac, u_const, u_chroma, u_smooth, u_key, u_gamma;
 static int game_w = 640, game_h = 480;
-/* everything is drawn into an offscreen framebuffer of the drawable's size (readable even when
-   the window is hidden, for FCOP_SHOT) and copied to the window on swap */
+/* everything is drawn into an offscreen framebuffer (readable even when the window is hidden,
+   for FCOP_SHOT) of the render size, and copied (scaled when it differs) to the window on swap */
 static GLuint fbo, rb_color, rb_depth;
 static int fbo_w, fbo_h;
 static int vp[4];  /* the 4:3 viewport inside it */
+static int hud_cut[4];  /* glp_hud: the half of the render area a split-screen HUD pass may draw in */
+static int want_w, want_h;  /* render size set by glp_set_render_size, 0 = the drawable's */
 static GLuint small_fbo, small_rb;  /* glp_read_frame16 */
 static int small_w, small_h;
 static GLuint post_fbo, post_tex;  /* gamma pass */
@@ -341,14 +343,34 @@ static void fbo_resize(int w, int h)
     fbo_h = h;
 }
 
-/* clear the whole drawable to black and set the 4:3 viewport for a game_w x game_h space */
+void glp_set_render_size(int w, int h)
+{
+    want_w = w;
+    want_h = h;
+}
+
+static void render_size(int *w, int *h)
+{
+    SDL_GL_GetDrawableSize(glp_window, w, h);
+    if (want_w > 0 && want_h > 0) *w = want_w, *h = want_h;
+    if (*w < 1) *w = 1;
+    if (*h < 1) *h = 1;
+}
+
+/* where the render-size picture goes in the drawable {x, y from the bottom, w, h}: all of it,
+   or the largest centred rectangle of its aspect */
+static void present_rect(int dw, int dh, int out[4])
+{
+    if (fbo_w == dw && fbo_h == dh) out[0] = out[1] = 0, out[2] = dw, out[3] = dh;
+    else glp_viewport_fit(dw, dh, fbo_w, fbo_h, out);
+}
+
+/* clear the whole render area to black and set the 4:3 viewport for a game_w x game_h space */
 static void start_drawable(int w, int h)
 {
     int dw, dh;
     check_thread();
-    SDL_GL_GetDrawableSize(glp_window, &dw, &dh);
-    if (dw < 1) dw = 1;
-    if (dh < 1) dh = 1;
+    render_size(&dw, &dh);
     if (dw != fbo_w || dh != fbo_h) fbo_resize(dw, dh);
     gl.BindFramebuffer(GL_FRAMEBUFFER, fbo);
     gl.Disable(GL_SCISSOR_TEST);
@@ -439,9 +461,14 @@ static void flush(void)
     }
     if (!have_valid || want.clip != have.clip || want.cx0 != have.cx0 || want.cy0 != have.cy0 || want.cx1 != have.cx1 ||
         want.cy1 != have.cy1) {
-        if (want.clip) {
-            int r[4];
-            glp_clip_rect(vp, game_w, game_h, want.cx0, want.cy0, want.cx1, want.cy1, r);
+        int r[4] = { 0, 0, fbo_w, fbo_h };
+        if (want.clip) glp_clip_rect(vp, game_w, game_h, want.cx0, want.cy0, want.cx1, want.cy1, r);
+        if (hud_cut[2] > 0) {  /* split-screen HUD: only this player's half */
+            int x0 = r[0] > hud_cut[0] ? r[0] : hud_cut[0], x1 = r[0] + r[2] < hud_cut[0] + hud_cut[2] ? r[0] + r[2] : hud_cut[0] + hud_cut[2];
+            r[0] = x0;
+            r[2] = x1 > x0 ? x1 - x0 : 0;
+        }
+        if (want.clip || hud_cut[2] > 0) {
             gl.Enable(GL_SCISSOR_TEST);
             gl.Scissor(r[0], r[1], r[2], r[3]);
         } else {
@@ -495,19 +522,28 @@ void glp_draw(int lines, const struct GlpVertex *v, int n)
     batch_n += n;
 }
 
-/* the 4:3 picture in window coordinates {x, y from the top, w, h}, as start_drawable places it */
+/* the 4:3 picture in window coordinates {x, y from the top, w, h}, as start_drawable places it
+   in the render area and glp_swap that in the window */
 static int picture_rect(double r[4])
 {
-    int ww, wh, dw, dh, d[4];
-    if (!glp_window) return 0;
+    int ww, wh, dw, dh, d[4], p[4];
+    double sx, sy, x, y, w, h;
+    if (!glp_window || fbo_w < 1 || fbo_h < 1) return 0;
     SDL_GetWindowSize(glp_window, &ww, &wh);
     SDL_GL_GetDrawableSize(glp_window, &dw, &dh);
     if (ww < 1 || wh < 1 || dw < 1 || dh < 1) return 0;
-    glp_viewport_fit(dw, dh, game_w, game_h, d);
-    r[0] = (double)d[0] * ww / dw;
-    r[1] = (double)(dh - d[1] - d[3]) * wh / dh;  /* GL counts y from the bottom */
-    r[2] = (double)d[2] * ww / dw;
-    r[3] = (double)d[3] * wh / dh;
+    glp_viewport_fit(fbo_w, fbo_h, game_w, game_h, d);
+    present_rect(dw, dh, p);
+    sx = (double)p[2] / fbo_w;
+    sy = (double)p[3] / fbo_h;
+    x = p[0] + d[0] * sx;
+    y = p[1] + d[1] * sy;
+    w = d[2] * sx;
+    h = d[3] * sy;
+    r[0] = x * ww / dw;
+    r[1] = (dh - y - h) * wh / dh;  /* GL counts y from the bottom */
+    r[2] = w * ww / dw;
+    r[3] = h * wh / dh;
     return r[2] > 0 && r[3] > 0;
 }
 
@@ -567,11 +603,46 @@ int glp_read_frame16(uint16_t *dst, int w, int h)
     return 1;
 }
 
+static int wide;  /* 3D frames fill the drawable (widescreen.c) */
+
+void glp_set_wide(int on) { wide = on; }
+
+double glp_render_aspect(void)
+{
+    int w, h;
+    if (!glp_ctx) return 0;
+    render_size(&w, &h);
+    return (double)w / h;
+}
+
+void glp_hud(int mode)
+{
+    int w = fbo_w, h = fbo_h;
+    if (!glp_ctx || !wide) return;
+    flush();
+    hud_cut[2] = 0;
+    if (mode) {
+        glp_viewport_43(w, h, vp);  /* also for Glide's 1280x1024: the game stretches 4:3 to it */
+        if (mode == 2 || mode == 3) {  /* centre the 4:3 HUD's left / right half in that half */
+            vp[0] = mode == 2 ? w / 4 - vp[2] / 4 : 3 * w / 4 - 3 * vp[2] / 4;
+            hud_cut[0] = mode == 2 ? 0 : w / 2;
+            hud_cut[1] = 0;
+            hud_cut[2] = mode == 2 ? w / 2 : w - w / 2;
+            hud_cut[3] = h;
+        }
+    } else {
+        vp[0] = vp[1] = 0, vp[2] = w, vp[3] = h;
+    }
+    gl.Viewport(vp[0], vp[1], vp[2], vp[3]);
+    have_valid = 0;  /* the scissor follows the viewport */
+}
+
 void glp_begin_frame(int w, int h)
 {
     if (!glp_ctx) return;
     flush();
     start_drawable(w, h);
+    glp_hud(0);
     have_valid = 0;
     frame_gamma = 1;
 }
@@ -687,9 +758,20 @@ void glp_swap(void)
     have_valid = 0;
     if (frame_gamma != 1) gamma_pass(frame_gamma);
     shot();
-    gl.BindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
-    gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
-    gl.BlitFramebuffer(0, 0, fbo_w, fbo_h, 0, 0, fbo_w, fbo_h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    {
+        int dw, dh, p[4];
+        SDL_GL_GetDrawableSize(glp_window, &dw, &dh);
+        present_rect(dw, dh, p);
+        gl.BindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
+        gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
+        if (p[2] != dw || p[3] != dh) {
+            gl.Viewport(0, 0, dw, dh);
+            gl.ClearColor(0, 0, 0, 1);
+            gl.Clear(GL_COLOR_BUFFER_BIT);
+        }
+        gl.BlitFramebuffer(0, 0, fbo_w, fbo_h, p[0], p[1], p[0] + p[2], p[1] + p[3], GL_COLOR_BUFFER_BIT,
+                           p[2] == fbo_w && p[3] == fbo_h ? GL_NEAREST : GL_LINEAR);
+    }
     SDL_GL_SwapWindow(glp_window);
     gl.BindFramebuffer(GL_FRAMEBUFFER, fbo);
 }

@@ -133,3 +133,10 @@ no `clip` calls (the game positions each view's vertices itself).
   indices are available in hardware mode. Our list leaves out 1600x1200 (HUD scaling bug).
 - The hardware-mode Preferences dialog shows the driver's modes and a "Filtering" checkbox
   (setstate 7), no Fullscreen checkbox; missions then run windowed unless toggled.
+
+## Widescreen
+
+Vertices arrive in the game's resolution (1280x960 at index 9), converted from its 2560x1920
+display list by the walker 0x456270. Widescreen (widescreen.c) narrows the game's view before
+projection and stretches the frame; the HUD is drawn in a second walker call with a 4:3
+viewport. Details: docs/superpowers/plans/2026-10-25-widescreen.md.

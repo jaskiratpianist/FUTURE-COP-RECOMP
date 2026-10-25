@@ -129,3 +129,11 @@ textures from the game already reduced to ARGB4444 (dithered, 4 bits per colour)
 the game's ARGB1555 (5 bits, the PlayStation's own format). Other differences seen: gamma 1.25
 (brighter), the game's own Glide HUD layout, fainter translucent light cones in Precinct
 Assault (not yet judged).
+
+## Widescreen
+
+At the 1280x960 setting the game opens a 1280x1024 Glide screen and stretches its 4:3 picture
+to it (y * 1.0667, constant 0x48466c in the walker 0x4393e0); type-6 text keeps unscaled pixel
+y, so it sits about 60 px above its icons there (the game's own). Widescreen stretches the
+whole screen like THRASH and draws the HUD pass with a 4:3 viewport, not 5:4. Details:
+docs/superpowers/plans/2026-10-25-widescreen.md.

@@ -21,6 +21,16 @@ void glp_clip_rect(const int vp[4], int game_w, int game_h, int x0, int y0, int 
 void glp_show16(const void *px, int w, int h, int pitch_bytes, uint32_t rmask, uint32_t gmask, uint32_t bmask);
 /* start a THRASH frame in a game coordinate space of game_w x game_h: clear to black */
 void glp_begin_frame(int game_w, int game_h);
+/* widescreen: with glp_set_wide(1) frames fill the whole drawable (the game draws them
+   narrowed, widescreen.c). glp_hud(1) switches to the 4:3 viewport for the HUD, 2 / 3 to the
+   left / right player's half of it in split screen (centred in, and cut to, their half of the
+   screen), 0 back to the whole area. */
+void glp_set_wide(int on);
+void glp_hud(int mode);
+/* width / height of the render size, 0 without a GL context */
+double glp_render_aspect(void);
+/* draw at w x h (shown scaled to the window, aspect kept), 0 x 0 = at the window's size */
+void glp_set_render_size(int w, int h);
 void glp_swap(void);
 
 /* drawing THRASH primitives in the current frame's game coordinates: x, y pixels, z depth

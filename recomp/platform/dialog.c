@@ -30,6 +30,12 @@ static const struct { const char *name; int fps; } fps_items[] = {
     { "FPS: 165", 165 }, { "FPS: 240", 240 }, { "FPS: unlimited", 0 },
 };
 
+/* ours in hardware mode: the display size (display_res_pref; item data w << 16 | h, 0 = the
+   desktop's) in place of the game's resolution list, and the widescreen box; OK applies both */
+#define DISPLAY_COMBO_ID 0x7E04u
+#define WIDESCREEN_BOX_ID 0x7E05u
+void widescreen_enable(int on);  /* widescreen.c */
+
 #define DLG_HWND_BASE 0x00DA0000u
 #define DLG_HWND_MASK 0xFFFF0000u
 #define MAX_OPEN_DLGS 16
@@ -211,6 +217,34 @@ static void combo_select(struct Control *c, int idx)
         c->cursor_pos = (int)strlen(c->text);
         c->replace_on_type = 1;
     }
+}
+
+/* fill c with "Desktop (WxH)" and the display's other sizes, largest first; select the
+   player's */
+static void display_items(struct Control *c)
+{
+    SDL_DisplayMode m;
+    int pw = 0, ph = 0, n = SDL_GetNumDisplayModes(0);
+    display_res_pref(&pw, &ph);
+    c->item_count = 0;
+    c->cur_sel = 0;
+    if (SDL_GetDesktopDisplayMode(0, &m) == 0) snprintf(c->items[0].text, sizeof c->items[0].text, "Desktop (%dx%d)", m.w, m.h);
+    else snprintf(c->items[0].text, sizeof c->items[0].text, "Desktop");
+    c->items[0].data = 0;
+    c->item_count = 1;
+    for (int i = 0; i < n && c->item_count < MAX_ITEMS; i++) {
+        u32 d;
+        int dup = 0;
+        if (SDL_GetDisplayMode(0, i, &m) != 0 || m.w < 640 || m.h < 480) continue;
+        d = (u32)m.w << 16 | (u32)m.h;
+        for (int k = 1; k < c->item_count; k++) dup |= c->items[k].data == d;
+        if (dup) continue;
+        snprintf(c->items[c->item_count].text, sizeof c->items[0].text, "%dx%d", m.w, m.h);
+        c->items[c->item_count].data = d;
+        if (m.w == pw && m.h == ph) c->cur_sel = c->item_count;
+        c->item_count++;
+    }
+    combo_select(c, c->cur_sel);
 }
 
 /* ---- Color and graphics helpers -------------------------------------------------------- */
@@ -903,6 +937,17 @@ static void trigger_button_click(Cpu *c, struct Dialog *dlg, struct Control *ctr
             fullscreen_pref_save(f->check_state);
             win_set_fullscreen(f->check_state);
         }
+        struct Control *d = find_ctrl_by_id(dlg, DISPLAY_COMBO_ID);
+        if (d && d->cur_sel >= 0 && d->cur_sel < d->item_count) {
+            u32 v = d->items[d->cur_sel].data;
+            display_res_pref_save((int)(v >> 16), (int)(v & 0xffff));
+            win_display_apply();
+        }
+        struct Control *w = find_ctrl_by_id(dlg, WIDESCREEN_BOX_ID);
+        if (w) {
+            widescreen_pref_save(w->check_state);
+            widescreen_enable(w->check_state);
+        }
         struct Control *p = find_ctrl_by_id(dlg, FPS_COMBO_ID);
         if (p && p->cur_sel >= 0 && p->cur_sel < (int)(sizeof fps_items / sizeof fps_items[0])) {
             fps_limit_pref_save(fps_items[p->cur_sel].fps);
@@ -1075,10 +1120,13 @@ static int dlg_event_hook(const SDL_Event *e)
                 }
             }
 
-            /* Hit test dialog controls */
+            /* Hit test dialog controls. Group boxes and plain static text let clicks through,
+               as in Windows (the 3Dfx options sit inside a group box). */
             for (int i = 0; i < dlg->num_controls; i++) {
                 struct Control *c = &dlg->controls[i];
                 if (!c->visible || !c->enabled) continue;
+                if (c->type == CTRL_BUTTON && c->btn_type == BTN_GROUP) continue;
+                if (c->type == CTRL_STATIC && !(c->style & 0x0100 /* SS_NOTIFY */)) continue;
 
                 int ch = (c->type == CTRL_COMBOBOX) ? 22 : c->h;
                 if (cur_mouse_x >= c->screen_x && cur_mouse_x < c->screen_x + c->w &&
@@ -2244,6 +2292,33 @@ static u32 imp_DialogBoxParamA(Cpu *c)
             f->hwnd = dlg->hwnd + (u32)++dlg->num_controls;
             f->visible = 1;
             f->check_state = fullscreen_pref();
+            /* our widescreen box, right below Fullscreen (above the 3Dfx group box in that mode) */
+            if (dlg->num_controls < MAX_CONTROLS) {
+                struct Control *w = &dlg->controls[dlg->num_controls];
+                *w = *f;
+                w->id = WIDESCREEN_BOX_ID;
+                w->hwnd = dlg->hwnd + (u32)++dlg->num_controls;
+                w->screen_y = f->screen_y + f->h + 6;
+                snprintf(w->text, sizeof w->text, "Widescreen");
+                w->check_state = widescreen_pref();
+            }
+        }
+        /* hardware mode: the game's resolution list (4:3, up to 1280x960) only sets the space it
+           draws in. Keep that at 1280x960, hidden, and show the display's real sizes instead. */
+        struct Control *gres = NULL;
+        int gsel = -1;
+        for (int i = 0; i < dlg->num_controls && !gres; i++)
+            if (dlg->controls[i].type == CTRL_COMBOBOX)
+                for (int k = 0; k < dlg->controls[i].item_count; k++)
+                    if (!strcmp(dlg->controls[i].items[k].text, "1280x960")) gres = &dlg->controls[i], gsel = k;
+        if (gres && renderer_hardware_running() && dlg->num_controls < MAX_CONTROLS) {
+            struct Control *d = &dlg->controls[dlg->num_controls];
+            *d = *gres;
+            d->id = DISPLAY_COMBO_ID;
+            d->hwnd = dlg->hwnd + (u32)++dlg->num_controls;
+            display_items(d);
+            gres->visible = 0;
+            combo_select(gres, gsel);
         }
         /* our frame rate limit, below the Audio button (same gap as above it); OK applies it */
         struct Control *rc = find_ctrl_by_id(dlg, RENDERER_COMBO_ID), *cfg = NULL, *audio = NULL;

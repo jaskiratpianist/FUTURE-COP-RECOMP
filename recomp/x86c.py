@@ -186,8 +186,9 @@ class Gen:
     # (frame_limit) writes them at start-up.
     FRAME_LIMIT = (0x406a7f, 0x406b30, 0x4071aa, 0x407278, 0x407295)
     # Functions the platform layer wraps: the recompiled original is named G_<addr> and the
-    # platform defines F_<addr> (core.c). 0x458ed0 fires a player weapon, once per frame.
-    WRAPPED = {0x458ed0}
+    # platform defines F_<addr>. 0x458ed0 fires a player weapon, once per frame (fps.c); the
+    # rest are projections, view tests and the display-list walkers (widescreen.c).
+    WRAPPED = {0x458ed0, 0x453740, 0x457140, 0x457340, 0x4393e0, 0x456270, 0x452fd0, 0x4572a0, 0x435330}
 
     def self_modifying(self):
         """Find code bytes the game rewrites at run time. Fields that are exactly an

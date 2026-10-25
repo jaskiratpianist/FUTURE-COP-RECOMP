@@ -236,6 +236,28 @@ void win_set_fullscreen(int on)
         fullscreen_state = new_state;
         if (main_win && main_win->sdl) apply_fullscreen(main_win->sdl, fullscreen_state);
         plat_log("fullscreen: %s", fullscreen_state ? "on" : "off");
+        win_display_apply();
+    }
+}
+
+static void window_size_for(int *w, int *h);
+
+/* OpenGL/3Dfx mode: the player's display size (Preferences). Fullscreen draws at that size,
+   scaled to the display; a window gets that size (and keeps it until the player resizes it). */
+void win_display_apply(void)
+{
+    int w = 0, h = 0;
+    if (renderer_wanted() == REND_SOFTWARE) return;
+    display_res_pref(&w, &h);
+    glp_set_render_size(fullscreen_state ? w : 0, fullscreen_state ? h : 0);
+    if (!fullscreen_state && main_win && main_win->sdl && cur_pres_w > 0) {
+        int tw = cur_pres_w, th = cur_pres_h;
+        window_size_for(&tw, &th);
+        user_resized = 0;
+        in_programmatic_resize = 1;
+        SDL_SetWindowSize(main_win->sdl, tw, th);
+        SDL_SetWindowPosition(main_win->sdl, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+        in_programmatic_resize = 0;
     }
 }
 
@@ -248,6 +270,12 @@ static void window_size_for(int *w, int *h)
     SDL_Rect usable = {0};
     int have_usable = SDL_GetDisplayUsableBounds(0, &usable) == 0 && usable.w > 0 && usable.h > 0;
     int min_h = env ? atoi(env) : have_usable ? usable.h * 3 / 4 : 720;
+    int pw, ph;
+    if (renderer_wanted() != REND_SOFTWARE && display_res_pref(&pw, &ph)) {  /* the player's size */
+        *w = pw;
+        *h = ph;
+        min_h = 0;
+    }
     if (min_h > 0 && *h > 0 && *h < min_h) {
         *w = *w * min_h / *h;
         *h = min_h;

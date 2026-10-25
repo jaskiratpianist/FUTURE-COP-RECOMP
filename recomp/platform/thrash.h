@@ -18,5 +18,9 @@ u32 thrash_proc(u32 module, const char *name);
 extern int thrash_frame_last;
 /* the game's current resolution: the coordinate space of THRASH vertices */
 void thrash_game_size(int *w, int *h);
+/* widescreen.c: follow the drawable's aspect (call between frames) */
+void widescreen_update(void);
+/* turn widescreen on or off (Preferences; applies from the next frame) */
+void widescreen_enable(int on);
 
 #endif

@@ -107,6 +107,7 @@ static u32 imp_setvideomode(Cpu *c)
         thrash_game_size(&w, &h);
         plat_log("THRASH setvideomode: %dx%d", w, h);
     }
+    widescreen_update();
     return 1;
 }
 
@@ -257,6 +258,7 @@ static u32 imp_pageflip(Cpu *c)
     begin_if_needed();
     frame_pace();
     if (!getenv("FCOP_THRASH_NODRAW")) glp_swap();  /* NODRAW: measure the game without the GPU path */
+    widescreen_update();
     frame_open = 0;
     thrash_frame_last = 1;
     frames++;

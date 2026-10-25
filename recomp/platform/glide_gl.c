@@ -98,6 +98,7 @@ static u32 imp_grSstWinOpen(Cpu *c)
         thrash_game_size(&screen_w, &screen_h);
     }
     plat_log("Glide grSstWinOpen: resolution code %u, %dx%d", res, screen_w, screen_h);
+    widescreen_update();
     frame_open = 0;
     return 1;
 }
@@ -321,6 +322,7 @@ static u32 imp_grBufferSwap(Cpu *c)
     begin_if_needed();
     frame_pace();
     if (!getenv("FCOP_THRASH_NODRAW")) glp_swap();
+    widescreen_update();
     frame_open = 0;
     thrash_frame_last = 1;  /* a GL mission frame is on screen (u32_win.c reads it back for dialogs) */
     frames++;

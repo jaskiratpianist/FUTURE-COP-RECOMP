@@ -210,6 +210,24 @@ own test run (`plat_test.py` is headless; `--png`, `--audio`, `--input`).
   1 pixel taller than the display (an exact cover lets the driver make an OpenGL window exclusive:
   all monitors go black at every switch and Alt+Tab); elsewhere SDL fullscreen-desktop. The game
   hides the cursor only in fullscreen; ShowCursor keeps the count but never hides the SDL cursor.
+- Widescreen and display size (OpenGL/3Dfx missions; recomp/platform/widescreen.c,
+  docs/superpowers/plans/2026-10-25-widescreen.md has the findings). The game draws into a
+  fixed 4:3 space of 2560x1920 units with integer projection (`sx = 1280 + x*4096/z`).
+  Hor+: wrappers (x86c `WRAPPED`) scale camera-space x by k = (4/3)/aspect before the
+  projections (0x453740 terrain, 0x457340 objects, 0x457140 sprites) and the sphere view tests
+  (0x452fd0 terrain cells, 0x4572a0 objects); the renderer stretches 3D over the whole render
+  area. The HUD is the display list's depth bucket 0 (node `[0x499ad0]`): the walker wrappers
+  (0x4393e0 Glide, 0x456270 THRASH) draw it in a second call with a 4:3 viewport (`glp_hud`;
+  split screen: each player's half). Target markers (0x435330) and full-height HUD bars are
+  moved back to 3D positions (`to_screen`). Aspect follows the render size after each present
+  (`widescreen_update`). Preferences (hardware mode) replaces the game's 4:3 resolution list
+  with ours (0x7E04: desktop + the display's modes, REG_DWORD `PortResolution` = w<<16|h,
+  0 = desktop; the game's own combo stays hidden on 1280x960, so it always draws at index 9)
+  and adds "Widescreen" (0x7E05, `PortWidescreen`, default on). Fullscreen renders at the
+  chosen size into an FBO, scaled to the display (`glp_set_render_size`); a window gets that
+  size. `FCOP_WIDE=0` off, `FCOP_WIDE=<aspect>` forces one, `FCOP_WIDE_LOG=1`.
+- Dialog hit tests skip group boxes and static text without SS_NOTIFY (as Windows does): the
+  3Dfx options (Filtering, Gamma) sit inside a group box that used to swallow every click.
 - OpenGL mode has no SDL renderer, so SDL does not scale mouse events: real events are mapped
   from window to game pixels (gl_present.c `glp_window_to_game`); FCOP_INPUT clicks are already
   in game pixels, so scripted tests cannot catch mistakes here.
@@ -217,7 +235,8 @@ own test run (`plat_test.py` is headless; `--png`, `--audio`, `--input`).
   coordinates in a 2560x1920 virtual space and scales them per resolution index in switches
   that only cover indices 0-9 (320x240 .. 1280x960; e.g. 0x40cd3f, 0x410552); index 10 takes the
   default, unscaled, so only the top-left ~60% of the picture shows. Fix later by adding a 5/8
-  case, or with the OpenGL high-res route. A saved index 10 falls back to 1280x960.
+  case, or with the OpenGL high-res route. A saved index 10 falls back to 1280x960. In
+  hardware mode this no longer matters: the game stays at index 9, our display size decides.
 - Never use `__attribute__((weak))` for **data** that another file defines: on Windows (PE/COFF)
   the reference does not resolve to the strong definition. u32_misc.c had weak copies of
   vk_down/mouse_buttons from the Gemini days, and GetAsyncKeyState read garbage (mouse x as a
@@ -245,10 +264,10 @@ own test run (`plat_test.py` is headless; `--png`, `--audio`, `--input`).
 4. Done (2026-10-25): **OpenGL renderer** for missions: route B, the game's THRASH driver
    interface implemented natively (thrash_gl.c, gl_present.c, texconv.c;
    docs/THRASH_NOTES.md has every call; design and plan in docs/superpowers/). Default on
-   (`Group` = `OpenGL`), software as fallback. 4:3 pillarbox at the real screen resolution,
-   filtered textures; the game's 37.5 fps mission limit is lifted (fps.c; x86c `FRAME_LIMIT`). Players pick a limit in Preferences (our combo 0x7E03 below Audio: original, 60..240, unlimited; REG_DWORD `FpsLimit`, applies on OK; frame_pace() before each present), F11 toggles the original limit, `FCOP_FRAME_TICKS=8` starts with it. The game scales movement by frame time, but player weapons fired once per frame: fps.c wraps 0x458ed0 to keep the original fire rate (x86c `WRAPPED`). Watch for other per-frame effects (enemy fire, damage over time). Next: widescreen (Hor+:
-   the game's projection, culling and HUD layout), the 2-player HUD
-   offset below,
+   (`Group` = `OpenGL`), software as fallback. Widescreen (Hor+) and any display size since
+   2026-10-25 (see Lessons), 4:3 pillarbox when turned off,
+   filtered textures; the game's 37.5 fps mission limit is lifted (fps.c; x86c `FRAME_LIMIT`). Players pick a limit in Preferences (our combo 0x7E03 below Audio: original, 60..240, unlimited; REG_DWORD `FpsLimit`, applies on OK; frame_pace() before each present), F11 toggles the original limit, `FCOP_FRAME_TICKS=8` starts with it. The game scales movement by frame time, but player weapons fired once per frame: fps.c wraps 0x458ed0 to keep the original fire rate (x86c `WRAPPED`). Watch for other per-frame effects (enemy fire, damage over time). Next: HUD elements anchored to
+   the screen edges in widescreen (now in the 4:3 centre), the 2-player HUD offset below,
    texture replacement by content hash (`tex_hash`), mipmaps.
 5. Open: the pause bar shows black behind it (the game clears the screen; same in OpenGL),
    in OpenGL 2-player split screen the right player's HUD numbers sit too far left (software

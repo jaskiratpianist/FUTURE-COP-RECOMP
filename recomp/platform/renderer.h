@@ -18,6 +18,14 @@ void fullscreen_pref_save(int on);
 /* 1 while the game runs a hardware 3D mode (Glide or THRASH): its own mode value, set at
    start-up (0 when it fell back to software) */
 int renderer_hardware_running(void);
+/* display size in OpenGL/3Dfx mode (Preferences): REG_DWORD PortResolution, the size of the
+   picture we render (fullscreen: scaled to the display; windowed: the window size); 0 = the
+   desktop's. Returns 1 and the size when one is set. */
+int display_res_pref(int *w, int *h);
+void display_res_pref_save(int w, int h);
+/* widescreen in missions (REG_DWORD PortWidescreen, missing: on) */
+int widescreen_pref(void);
+void widescreen_pref_save(int on);
 /* frame rate limit (Preferences, REG_DWORD FpsLimit in registry.txt): FPS_ORIGINAL is the
    game's own 37.5 fps mission limit, 0 none, else frames per second (missing: none) */
 #define FPS_ORIGINAL 37

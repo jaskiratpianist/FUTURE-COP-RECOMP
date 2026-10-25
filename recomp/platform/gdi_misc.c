@@ -615,6 +615,42 @@ void fps_limit_pref_save(int fps)
     pthread_mutex_unlock(&reg_mutex);
 }
 
+/* our REG_DWORDs in the Future Cop key: PortResolution (width << 16 | height, missing or 0 = the
+   desktop's) and PortWidescreen (missing: on) */
+static u32 port_dword(const char *name, u32 dflt)
+{
+    RegValue *v;
+    u32 d = dflt;
+    pthread_mutex_lock(&reg_mutex);
+    reg_load_locked();
+    v = reg_find_value_locked(FCOP_KEY, name);
+    if (v && v->data_len >= 4) memcpy(&d, v->data, 4);
+    pthread_mutex_unlock(&reg_mutex);
+    return d;
+}
+
+static void port_dword_save(const char *name, u32 d)
+{
+    pthread_mutex_lock(&reg_mutex);
+    reg_load_locked();
+    reg_set_value_locked(reg_get_or_create_key_locked(FCOP_KEY), name, 4, (const u8 *)&d, 4);
+    reg_save_locked();
+    pthread_mutex_unlock(&reg_mutex);
+}
+
+int display_res_pref(int *w, int *h)
+{
+    u32 d = port_dword("PortResolution", 0);
+    *w = (int)(d >> 16);
+    *h = (int)(d & 0xffff);
+    if (*w < 320 || *h < 200) *w = *h = 0;
+    return *w != 0;
+}
+
+void display_res_pref_save(int w, int h) { port_dword_save("PortResolution", (u32)w << 16 | (u32)h); }
+int widescreen_pref(void) { return port_dword("PortWidescreen", 1) != 0; }
+void widescreen_pref_save(int on) { port_dword_save("PortWidescreen", on != 0); }
+
 int renderer_hardware_running(void) { return rd32(0x511f90) != 0; }  /* 1 Glide, 2 THRASH (0x45adb0) */
 
 int thrash_wanted(void) { return renderer_wanted() == REND_OPENGL; }
