@@ -6,7 +6,7 @@
 #include "thrash.h"
 #include "win.h"
 #include "gl_present.h"
-#include "thrash_tex.h"
+#include "texconv.h"
 
 #define THRASH_MODULE 0x60000000u
 
@@ -168,8 +168,8 @@ static u32 imp_tupdate(Cpu *c)
     if (k < 0 || !px) return 0;
     need = (size_t)texs[k].w * texs[k].h * 4;
     if (need > cap && !(rgba = realloc(rgba, cap = need))) { cap = 0; return 0; }
-    thrash_tex_to_rgba8((const u16 *)G(px), rgba, texs[k].w, texs[k].h, texs[k].fmt);
-    texs[k].hash = thrash_tex_hash((const u16 *)G(px), texs[k].w, texs[k].h);
+    tex_4444_to_rgba8((const u16 *)G(px), rgba, texs[k].w * texs[k].h);
+    texs[k].hash = tex_hash((const u16 *)G(px), texs[k].w * texs[k].h);
     glp_tex_upload(texs[k].gl, texs[k].w, texs[k].h, rgba, tex_linear(), states[13] != 0);
     return ARG(0);
 }

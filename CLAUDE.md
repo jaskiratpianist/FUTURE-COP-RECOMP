@@ -48,7 +48,7 @@ recomp/platform/      Win32/DirectX on SDL2: core.c (memory, thunks, handles, CO
                       os_win.c/h (Windows host: VirtualAlloc, setenv, fsync for MinGW)
 recomp/platform/thrash_gl.c   the THRASH 3D driver on OpenGL (LoadLibraryA/GetProcAddress hooks in k32_proc.c)
 recomp/platform/gl_present.c  OpenGL backend: context, offscreen framebuffer, batching, 16-bit frames
-recomp/test_*.c       unit tests for gl_present.c / thrash_tex.c helpers (build line at the top of each)
+recomp/test_*.c       unit tests for gl_present.c / texconv.c / glide_tmem.c helpers (build line at the top of each)
 recomp/build.sh       generate + compile + link -> build/recomp/fcop
 recomp/plat_test.py   build and run the game briefly, print the log tail (the one command Gemini may run)
 recomp/plat_agy.py    hand one platform file to a Gemini worker (assignments are in this file)
@@ -229,13 +229,13 @@ own test run (`plat_test.py` is headless; `--png`, `--audio`, `--input`).
    review ddraw.c, dsound.c, dinput.c against the DirectX 5 SDK layouts).
 3. Sound through dsound.c and SDL audio; music streaming uses the play/write cursors.
 4. Done (2026-10-25): **OpenGL renderer** for missions: route B, the game's THRASH driver
-   interface implemented natively (thrash_gl.c, gl_present.c, thrash_tex.c;
+   interface implemented natively (thrash_gl.c, gl_present.c, texconv.c;
    docs/THRASH_NOTES.md has every call; design and plan in docs/superpowers/). Default on
    (`Group` = `OpenGL`), software as fallback. 4:3 pillarbox at the real screen resolution,
    filtered textures; the game itself limits missions to ~37 fps. Next: widescreen (Hor+:
    the game's projection, culling and HUD layout), the game's frame limit, the Fullscreen
    option in hardware mode (its Preferences dialog has none), the 2-player HUD offset below,
-   texture replacement by content hash (`thrash_tex_hash`), mipmaps.
+   texture replacement by content hash (`tex_hash`), mipmaps.
 5. Open: the pause bar shows black behind it (the game clears the screen; same in OpenGL),
    in OpenGL 2-player split screen the right player's HUD numbers sit too far left (software
    is right; cause unknown, maybe the original hardware path), the 565
