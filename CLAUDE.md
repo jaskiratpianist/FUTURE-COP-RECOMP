@@ -190,6 +190,10 @@ own test run (`plat_test.py` is headless; `--png`, `--audio`, `--input`).
   `FCOP_RENDERER=software|opengl|glide` overrides it; `FCOP_GL_FAIL=1` makes OpenGL start-up
   fail on purpose (the game then falls back to software by itself). In Glide mode the game
   offers 640x480..1280x960 without 1120x840 (its own resolution switch, 0x43a490).
+  Players choose it in Preferences: dialog.c puts a "Renderer" combo box (our own control,
+  id 0x7E01, unknown to the game's dialog procedure) where the hidden "Processor Select"
+  was; OK writes Group (renderer_save, gdi_misc.c) and shows a note that it applies at the
+  next start.
 - Key bindings: `controls.txt` in the game folder, written **as soon as Controller
   Configuration closes with OK** (tests that rebind keys change the player's real bindings:
   back the file up and restore it). In memory: 14 (device, key) pairs per player at

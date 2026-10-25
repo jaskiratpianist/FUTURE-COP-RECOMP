@@ -8,5 +8,8 @@ enum { REND_SOFTWARE, REND_OPENGL, REND_GLIDE };
    HKLM\Software\Electronic Arts\Future Cop: "Software", "3Dfx" (Glide, glide_gl.c), anything
    else OpenGL (THRASH, thrash_gl.c) */
 int renderer_wanted(void);
+/* write REND_* as Group to registry.txt (the Preferences dialog's choice); the game reads it
+   at start-up, so it applies at the next start */
+void renderer_save(int r);
 
 #endif

@@ -12,7 +12,17 @@
 #include "host.h"
 #include "dialog.h"
 #include "win.h"
+#include "renderer.h"
 #include "third_party/font8x8_basic.h"
+
+/* our renderer choice in Preferences (dialog 101): not a control of the game's template, so
+   the game's dialog procedure ignores it; OK saves it (renderer_save), it applies at the next
+   start */
+#define RENDERER_COMBO_ID 0x7E01u
+static const struct { const char *name; int rend; } renderer_items[3] = {
+    { "OpenGL", REND_OPENGL }, { "3Dfx (Glide)", REND_GLIDE }, { "Software", REND_SOFTWARE },
+};
+static int renderer_changed;  /* show the restart note when Preferences closes */
 
 #define DLG_HWND_BASE 0x00DA0000u
 #define DLG_HWND_MASK 0xFFFF0000u
@@ -874,6 +884,14 @@ static void trigger_button_click(Cpu *c, struct Dialog *dlg, struct Control *ctr
         dlg->ended = 1;
         dlg->result = ctrl->id;
         return;
+    }
+
+    if (dlg->res_id == 101 && ctrl->id == 1001 /* OK */) {
+        struct Control *r = find_ctrl_by_id(dlg, RENDERER_COMBO_ID);
+        if (r && r->cur_sel >= 0 && r->cur_sel < 3 && renderer_items[r->cur_sel].rend != renderer_wanted()) {
+            renderer_save(renderer_items[r->cur_sel].rend);
+            renderer_changed = 1;
+        }
     }
 
     if (ctrl->type == CTRL_BUTTON) {
@@ -1949,16 +1967,17 @@ u32 dlg_send(Cpu *c, u32 hwnd, u32 msg, u32 wp, u32 lp)
 
 /* ---- Dialog Imports -------------------------------------------------------------------- */
 
+static u32 message_box(u32 parent, const char *text, const char *caption, u32 type);
+
 static u32 imp_MessageBoxA(Cpu *c)
 {
-    u32 parent = ARG(0);
     u32 text_p = ARG(1);
     u32 cap_p = ARG(2);
-    u32 type = ARG(3);
+    return message_box(ARG(0), text_p ? GSTR(text_p) : "", cap_p ? GSTR(cap_p) : "Error", ARG(3));
+}
 
-    const char *text = text_p ? GSTR(text_p) : "";
-    const char *caption = cap_p ? GSTR(cap_p) : "Error";
-
+static u32 message_box(u32 parent, const char *text, const char *caption, u32 type)
+{
     plat_log("MessageBoxA(hwnd 0x%x, type 0x%x): [%s] %s", parent, type, caption, text);
 
     if (dlg_stack_depth >= MAX_OPEN_DLGS) {
@@ -2177,16 +2196,27 @@ static u32 imp_DialogBoxParamA(Cpu *c)
         guest_call(c, dlg->proc, 4, (u32[]){ dlg->hwnd, 0x0110 /* WM_INITDIALOG */, first_ctrl_hwnd, param });
     }
     /* Preferences (dialog 101): "Processor Select" only picks 1998 CPU-specific renderer loops,
-       meaningless for recompiled code: hide it and keep it on AutoDetect (item 0) */
+       meaningless for recompiled code: hide it, keep it on AutoDetect (item 0) and put our
+       renderer choice in its place */
     if (dlg->res_id == 101) {
         struct Control *label = find_ctrl_by_id(dlg, 1111), *combo = find_ctrl_by_id(dlg, 1023);
-        struct Control *ctl = find_ctrl_by_id(dlg, 1099), *audio = find_ctrl_by_id(dlg, 1100);
-        if (label && combo && ctl && audio) {
-            int up = ctl->screen_y - label->screen_y;  /* move the two buttons into the gap */
-            label->visible = combo->visible = 0;
+        if (label && combo && dlg->num_controls < MAX_CONTROLS) {
+            struct Control *r = &dlg->controls[dlg->num_controls];
+            *r = *combo;
+            combo->visible = 0;
             combo->cur_sel = 0;
-            ctl->screen_y -= up;
-            audio->screen_y -= up;
+            strncpy(label->text, "Renderer", sizeof label->text);
+            r->id = RENDERER_COMBO_ID;
+            r->hwnd = dlg->hwnd + (u32)++dlg->num_controls;
+            r->item_count = 0;
+            for (int k = 0; k < 3; k++) {
+                strncpy(r->items[k].text, renderer_items[k].name, sizeof r->items[k].text);
+                r->item_count++;
+            }
+            r->cur_sel = 0;
+            for (int k = 0; k < 3; k++)
+                if (renderer_items[k].rend == renderer_wanted()) r->cur_sel = k;
+            combo_select(r, r->cur_sel);
         }
     }
     /* the pause bar's first button is Abort: start on Resume so Enter cannot end the mission */
@@ -2212,6 +2242,10 @@ static u32 imp_DialogBoxParamA(Cpu *c)
 
     if (dlg_log_enabled()) {
         plat_log("DialogBoxParamA: tmpl %u finished with result %d", tmpl, (int)res);
+    }
+    if (renderer_changed) {
+        renderer_changed = 0;
+        message_box(0, "Renderer change takes effect when you restart Future Cop.", "Renderer", 0 /* MB_OK */);
     }
     return res;
 }

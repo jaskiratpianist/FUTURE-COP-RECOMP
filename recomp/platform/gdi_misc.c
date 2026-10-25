@@ -551,6 +551,22 @@ int renderer_wanted(void)
     return r;
 }
 
+/* the Group value for each REND_* */
+static const char *const group_names[] = { "Software", "OpenGL", "3Dfx" };
+
+void renderer_save(int r)
+{
+    RegKey *k;
+    if (r < REND_SOFTWARE || r > REND_GLIDE) return;
+    pthread_mutex_lock(&reg_mutex);
+    reg_load_locked();
+    k = reg_get_or_create_key_locked(FCOP_KEY);
+    reg_set_value_locked(k, "Group", 1, (const u8 *)group_names[r], (u32)strlen(group_names[r]) + 1);
+    reg_save_locked();
+    pthread_mutex_unlock(&reg_mutex);
+    plat_log("renderer: Group = %s (applies at the next start)", group_names[r]);
+}
+
 int thrash_wanted(void) { return renderer_wanted() == REND_OPENGL; }
 
 /* LONG RegOpenKeyExA(HKEY hKey, LPCSTR lpSubKey, DWORD ulOptions, REGSAM samDesired, PHKEY phkResult) */
@@ -680,10 +696,10 @@ static u32 imp_RegQueryValueExA(Cpu *c)
     RegValue *val = reg_find_value_locked(path, vname);
     RegValue forced;
     if (!strcasecmp(path, FCOP_KEY) && !strcasecmp(vname, "Group") && renderer_from_env() >= 0) {
-        static const char *const group[] = { "Software", "OpenGL", "3Dfx" };  /* FCOP_RENDERER overrides the registry */
+        const char *g = group_names[renderer_from_env()];  /* FCOP_RENDERER overrides the registry */
         forced.type = 1;
-        forced.data = (u8 *)group[renderer_from_env()];
-        forced.data_len = (u32)strlen(group[renderer_from_env()]) + 1;
+        forced.data = (u8 *)g;
+        forced.data_len = (u32)strlen(g) + 1;
         val = &forced;
     }
     if (!val) {
