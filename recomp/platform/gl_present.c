@@ -106,7 +106,7 @@ static SDL_Window *glp_window;
 static SDL_GLContext glp_ctx;
 static SDL_threadID glp_thread;
 static GLuint prog, vao, vbo, frame_tex;
-static GLint u_size, u_use_tex, u_glide, u_cc, u_ac, u_const, u_chroma, u_key, u_gamma;
+static GLint u_size, u_use_tex, u_glide, u_cc, u_ac, u_const, u_chroma, u_smooth, u_key, u_gamma;
 static int game_w = 640, game_h = 480;
 /* everything is drawn into an offscreen framebuffer of the drawable's size (readable even when
    the window is hidden, for FCOP_SHOT) and copied to the window on swap */
@@ -124,7 +124,7 @@ static float frame_gamma = 1;
 static struct GlpVertex batch[BATCH_MAX];
 static int batch_n;
 /* glide: 0 = THRASH colour (texture x vertex), 1 = the Glide combine in cc/ac, which pack
-   function | factor << 8 | local << 16 | other << 24; chroma = key colour + 1 (0 = off);
+   function | factor << 8 | local << 16 | other << 24; chroma = (key colour | smooth << 24) + 1 (0 = off);
    clip = 1 with the scissor rectangle cx0..cy1 in game coordinates */
 static struct {
     unsigned tex; int blend, bsrc, bdst, depth, cull, lines;
@@ -150,14 +150,17 @@ static const char *vs_src =
     "}\n";
 /* u_glide = 1: Glide 2 colour/alpha combine (docs/GLIDE_NOTES.md): u_cc / u_ac = (function,
    factor, local, other); local 0 iterated, 1 constant; other 0 iterated, 1 texture, 2 constant.
-   The chromakey compares the "other" colour (for texture modes the unfiltered texel), as the
-   Voodoo did. u_gamma is only set for the gamma pass at present time. */
+   The chromakey compares the "other" colour with the key. With a filtered texture (u_smooth)
+   the four texels are filtered by hand with keyed texels left out, and the share of unkeyed
+   texels becomes a soft alpha edge: no stair steps, no dark fringe (a Voodoo compared the
+   filtered colour and drew dark fringes). u_gamma is only set for the gamma pass at present
+   time. */
 static const char *fs_src =
     "#version 330 core\n"
     "in vec4 v_col;\n"
     "in vec2 v_uv;\n"
     "uniform sampler2D u_tex;\n"
-    "uniform int u_use_tex, u_glide, u_chroma;\n"
+    "uniform int u_use_tex, u_glide, u_chroma, u_smooth;\n"
     "uniform ivec4 u_cc, u_ac;\n"
     "uniform vec4 u_const;\n"
     "uniform vec3 u_key;\n"
@@ -182,25 +185,41 @@ static const char *fs_src =
     "    if (fn == 9) return local - f * local;\n"
     "    return la - f * local;\n"
     "}\n"
+    "bool keyed(vec3 c) { return all(lessThan(abs(c - u_key), vec3(0.5 / 255.0))); }\n"
     "void main() {\n"
     "    vec4 t = u_use_tex != 0 ? texture(u_tex, v_uv) : vec4(1.0);\n"
+    "    float edge = 1.0;\n"
     "    if (u_glide == 0) {\n"
     "        o_col = v_col * t;\n"
     "    } else {\n"
+    "        bool tex_key = u_chroma != 0 && u_cc.w == 1 && u_use_tex != 0;\n"
+    "        if (tex_key) {\n"
+    "            ivec2 sz = textureSize(u_tex, 0);\n"
+    "            if (u_smooth != 0) {\n"
+    "                vec2 p = v_uv * vec2(sz) - 0.5, f = fract(p);\n"
+    "                ivec2 i0 = ivec2(floor(p));\n"
+    "                vec4 sum = vec4(0.0);\n"
+    "                float cov = 0.0;\n"
+    "                for (int d = 0; d < 4; d++) {\n"
+    "                    ivec2 o = ivec2(d & 1, d >> 1);\n"
+    "                    vec4 c = texelFetch(u_tex, clamp(i0 + o, ivec2(0), sz - 1), 0);\n"
+    "                    float w = (o.x == 1 ? f.x : 1.0 - f.x) * (o.y == 1 ? f.y : 1.0 - f.y);\n"
+    "                    if (!keyed(c.rgb)) { sum += c * w; cov += w; }\n"
+    "                }\n"
+    "                edge = smoothstep(0.25, 0.75, cov);\n"
+    "                if (edge <= 0.0) discard;\n"
+    "                t = sum / cov;\n"
+    "            } else if (keyed(texelFetch(u_tex, clamp(ivec2(floor(v_uv * vec2(sz))), ivec2(0), sz - 1), 0).rgb)) {\n"
+    "                discard;\n"
+    "            }\n"
+    "        }\n"
     "        vec3 cl = u_cc.z == 1 ? u_const.rgb : u_cc.z == 0 ? v_col.rgb : vec3(0.0);\n"
     "        vec3 co = u_cc.w == 1 ? t.rgb : u_cc.w == 2 ? u_const.rgb : v_col.rgb;\n"
     "        float al = u_ac.z == 1 ? u_const.a : u_ac.z == 0 ? v_col.a : 0.0;\n"
     "        float ao = u_ac.w == 1 ? t.a : u_ac.w == 2 ? u_const.a : v_col.a;\n"
-    "        if (u_chroma != 0) {\n"
-    "            vec3 k = co;\n"
-    "            if (u_cc.w == 1 && u_use_tex != 0) {\n"
-    "                ivec2 sz = textureSize(u_tex, 0);\n"
-    "                k = texelFetch(u_tex, clamp(ivec2(floor(v_uv * vec2(sz))), ivec2(0), sz - 1), 0).rgb;\n"
-    "            }\n"
-    "            if (all(lessThan(abs(k - u_key), vec3(0.5 / 255.0)))) discard;\n"
-    "        }\n"
+    "        if (u_chroma != 0 && !tex_key && keyed(co)) discard;\n"
     "        o_col.rgb = clamp(comb(u_cc.x, fac(u_cc.y, cl, al, ao, t.a), cl, al, co), 0.0, 1.0);\n"
-    "        o_col.a = clamp(comb(u_ac.x, fac(u_ac.y, vec3(al), al, ao, t.a), vec3(al), al, vec3(ao)).x, 0.0, 1.0);\n"
+    "        o_col.a = clamp(comb(u_ac.x, fac(u_ac.y, vec3(al), al, ao, t.a), vec3(al), al, vec3(ao)).x, 0.0, 1.0) * edge;\n"
     "    }\n"
     "    o_col.rgb = pow(o_col.rgb, vec3(1.0 / u_gamma));\n"
     "}\n";
@@ -268,6 +287,7 @@ int glp_init(SDL_Window *w)
     u_ac = gl.GetUniformLocation(prog, "u_ac");
     u_const = gl.GetUniformLocation(prog, "u_const");
     u_chroma = gl.GetUniformLocation(prog, "u_chroma");
+    u_smooth = gl.GetUniformLocation(prog, "u_smooth");
     u_key = gl.GetUniformLocation(prog, "u_key");
     u_gamma = gl.GetUniformLocation(prog, "u_gamma");
     gl.Uniform1f(u_gamma, 1);
@@ -412,8 +432,9 @@ static void flush(void)
         gl.Uniform4f(u_const, (want.cconst >> 16 & 255) / 255.0f, (want.cconst >> 8 & 255) / 255.0f, (want.cconst & 255) / 255.0f,
                      (want.cconst >> 24) / 255.0f);
     if (!have_valid || want.chroma != have.chroma) {
-        uint32_t k = want.chroma - 1;
+        uint32_t k = (want.chroma - 1) & 0xffffff;
         gl.Uniform1i(u_chroma, want.chroma != 0);
+        gl.Uniform1i(u_smooth, (want.chroma - 1) >> 24 & 1);
         gl.Uniform3f(u_key, (k >> 16 & 255) / 255.0f, (k >> 8 & 255) / 255.0f, (k & 255) / 255.0f);
     }
     if (!have_valid || want.clip != have.clip || want.cx0 != have.cx0 || want.cy0 != have.cy0 || want.cx1 != have.cx1 ||
@@ -451,7 +472,10 @@ void glp_set_combine(int glide, int cc, int ac)
     SET_STATE(ac, ac);
 }
 void glp_set_const_color(uint32_t argb) { SET_STATE(cconst, argb); }
-void glp_set_chromakey(int on, uint32_t rgb) { SET_STATE(chroma, on ? (rgb & 0xffffff) + 1 : 0); }
+void glp_set_chromakey(int on, uint32_t rgb, int smooth)
+{
+    SET_STATE(chroma, on ? ((rgb & 0xffffff) | (uint32_t)(smooth != 0) << 24) + 1 : 0);
+}
 void glp_set_clip(int on, int x0, int y0, int x1, int y1)
 {
     SET_STATE(clip, on != 0);

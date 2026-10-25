@@ -105,6 +105,9 @@ alpha factors are (4, 0) and do not matter (no destination alpha).
 Chromakey: on, key 0 (black). On a Voodoo the key is compared with the colour combine unit's
 "other" input (the texel colour for the texture modes), before blending: texels whose colour
 is 0x0000 or 0x8000 in 1555 (rgb black) are not drawn; the game's opaque near-black is 0x8001.
+The port improves on this with filtered textures: the four texels are filtered with keyed
+ones left out and their share becomes a soft alpha edge (no stair steps, no dark fringe;
+the user found the hard texel edges too sharp).
 
 ## Textures
 

@@ -121,10 +121,15 @@ static int tex_linear(void)
     return filter_linear;
 }
 
-static u32 imp_grTexFilterMode(Cpu *c) { filter_linear = ARG(2) == 1; return 0; }        /* GR_TEXTUREFILTER_BILINEAR */
+static u32 imp_grTexFilterMode(Cpu *c)
+{
+    filter_linear = ARG(2) == 1;  /* GR_TEXTUREFILTER_BILINEAR */
+    glp_set_chromakey(chroma_on, chroma_key, tex_linear());
+    return 0;
+}        /* GR_TEXTUREFILTER_BILINEAR */
 static u32 imp_grTexClampMode(Cpu *c) { clamp_st = ARG(1) == 1 && ARG(2) == 1; return 0; } /* GR_TEXTURECLAMP_CLAMP */
-static u32 imp_grChromakeyMode(Cpu *c) { chroma_on = ARG(0) != 0; glp_set_chromakey(chroma_on, chroma_key); return 0; }
-static u32 imp_grChromakeyValue(Cpu *c) { chroma_key = ARG(0); glp_set_chromakey(chroma_on, chroma_key); return 0; }
+static u32 imp_grChromakeyMode(Cpu *c) { chroma_on = ARG(0) != 0; glp_set_chromakey(chroma_on, chroma_key, tex_linear()); return 0; }
+static u32 imp_grChromakeyValue(Cpu *c) { chroma_key = ARG(0); glp_set_chromakey(chroma_on, chroma_key, tex_linear()); return 0; }
 
 /* ---- textures -------------------------------------------------------------------------- */
 

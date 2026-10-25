@@ -40,7 +40,8 @@ void glp_draw(int lines, const struct GlpVertex *v, int n);  /* triangles (n % 3
    other << 24 (Glide 2 codes) */
 void glp_set_combine(int glide, int cc, int ac);
 void glp_set_const_color(uint32_t argb);
-void glp_set_chromakey(int on, uint32_t rgb);  /* discard where the "other" colour is rgb */
+/* discard where the "other" colour is rgb; smooth (filtered texture): soft edges (gl_present.c) */
+void glp_set_chromakey(int on, uint32_t rgb, int smooth);
 void glp_set_clip(int on, int x0, int y0, int x1, int y1);  /* game coordinates, scissor */
 /* gamma for the frame being drawn (out = in^(1/g), whole picture, at present time); each new
    frame starts at 1 */
