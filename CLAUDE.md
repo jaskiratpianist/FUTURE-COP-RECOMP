@@ -195,6 +195,14 @@ own test run (`plat_test.py` is headless; `--png`, `--audio`, `--input`).
   opens from the main menu (the pause bar has no button for it), so the rate never changes
   mid-mission. FCOP_FPS_MAX / FCOP_FPS override the saved rate for tests. The counter is drawn
   top-right into the shown picture only (FCOP_SHOT frames don't have it).
+- CRT filter (branch crt-filter, experiment, aesthetics only): Preferences checkbox "CRT Filter" under
+  Show FPS Counter (registry Settings `CRTFilter`, `FCOP_CRT=0/1` overrides). u32_win.c `crt_draw`, after
+  the picture is drawn: a MOD-blended overlay at the picture's size in screen pixels (scanlines, an
+  R/G/B aperture grille every 3 pixels, darker corners; rebuilt only when that size changes), then the
+  picture again ADD-blended at alpha 64 to win back brightness. Scanlines follow picture lines while a
+  line gets >= 3 screen pixels, else every 2nd/4th line. FCOP_SHOT frames never have it.
+  `FCOP_SCREEN_SHOT=file.ppm` saves what the screen shows (filter, FPS counter) at every present;
+  headless it needs `SDL_RENDER_DRIVER=software` (the offscreen OpenGL renderer reads back a wrong picture).
 - Settings live in our registry (`user_info/registry.txt`) under
   HKLM\Software\Electronic Arts\Future Cop\Settings (Resolution = list index, FullScreen,
   volumes...). The installer used to create the key; gdi_misc.c creates it now. The game saves

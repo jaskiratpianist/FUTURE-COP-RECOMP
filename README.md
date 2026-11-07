@@ -117,6 +117,8 @@ folder) are copied into `user_info/` on the first start.
   Frame Rate** raises that (up to 90 by default, matched to your screen's refresh rate so
   motion stays even), up to Unlimited, or back to the original 37.5. The game plays at the
   same speed either way. **Show FPS Counter** shows the frame rate in missions.
+- **CRT Filter** (Preferences) gives the picture the look of an old monitor: scanlines,
+  a phosphor pattern and slightly darker corners. It only changes how the picture looks.
 
 Optional environment variables:
 

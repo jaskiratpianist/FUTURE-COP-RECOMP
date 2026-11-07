@@ -187,6 +187,7 @@ static struct Control *find_ctrl_by_id(struct Dialog *dlg, u32 id)
 #define PORT_ID       0x7f00u
 #define ID_FRAMERATE  (PORT_ID + 1)
 #define ID_SHOWFPS    (PORT_ID + 2)
+#define ID_CRT        (PORT_ID + 3)
 
 /* a message to the game's dialog procedure */
 static u32 dlg_call(Cpu *c, struct Dialog *dlg, u32 msg, u32 wp, u32 lp)
@@ -886,7 +887,7 @@ static void render_all_dialogs(void)
 
 /* Preferences (dialog 101): the port's settings go into the gap left by Processor Select (hidden
    in imp_DialogBoxParamA): the mission frame rate and the FPS counter. Coordinates are dialog
-   units of the final layout (Controller and Audio move up 34 units). */
+   units of the final layout (Controller and Audio move up 34 units). Also the CRT filter. */
 static const struct { int fps; const char *name; } fps_choices[] = {
     {37, "37.5 (original)"}, {60, "Up to 60"}, {90, "Up to 90"}, {120, "Up to 120"},
     {144, "Up to 144"}, {165, "Up to 165"}, {240, "Up to 240"}, {0, "Unlimited"},
@@ -927,17 +928,22 @@ static void prefs_add_port(struct Dialog *dlg)
         }
         c->item_count = n;
     }
-    if ((c = add_port_ctrl(dlg, CTRL_BUTTON, ID_SHOWFPS, 7, 118, 115, 9, "Show FPS Counter"))) {
+    if ((c = add_port_ctrl(dlg, CTRL_BUTTON, ID_SHOWFPS, 7, 113, 115, 9, "Show FPS Counter"))) {
         c->style |= BTN_AUTOCHECK;
         c->btn_type = BTN_AUTOCHECK;
         c->check_state = win_fps_counter;
+    }
+    if ((c = add_port_ctrl(dlg, CTRL_BUTTON, ID_CRT, 7, 124, 115, 9, "CRT Filter"))) {
+        c->style |= BTN_AUTOCHECK;
+        c->btn_type = BTN_AUTOCHECK;
+        c->check_state = win_crt_filter;
     }
 }
 
 /* OK in Preferences: apply and keep the port's settings */
 static void prefs_save_port(struct Dialog *dlg)
 {
-    struct Control *rate = find_ctrl_by_id(dlg, ID_FRAMERATE), *cnt = find_ctrl_by_id(dlg, ID_SHOWFPS);
+    struct Control *rate = find_ctrl_by_id(dlg, ID_FRAMERATE), *cnt = find_ctrl_by_id(dlg, ID_SHOWFPS), *crt;
     if (rate && rate->cur_sel >= 0 && rate->cur_sel < rate->item_count) {
         int fps = (int)rate->items[rate->cur_sel].data;
         if (fps != win_get_fps()) {
@@ -949,6 +955,10 @@ static void prefs_save_port(struct Dialog *dlg)
     if (cnt) {
         win_fps_counter = cnt->check_state != 0;
         reg_setting_set("ShowFPS", win_fps_counter);
+    }
+    if ((crt = find_ctrl_by_id(dlg, ID_CRT))) {
+        win_crt_filter = crt->check_state != 0;
+        reg_setting_set("CRTFilter", win_crt_filter);
     }
 }
 

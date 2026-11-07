@@ -62,6 +62,8 @@ void win_set_fps(int max);
 int win_get_fps(void);
 /* Preferences "Show FPS Counter" (registry ShowFPS): frames per second in a corner in missions */
 extern int win_fps_counter;
+/* Preferences "CRT Filter" (registry CRTFilter): scanlines and a phosphor mask over the shown picture */
+extern int win_crt_filter;
 /* if set, plat_pump offers every SDL event (except SDL_QUIT) to it first; returning 1 consumes
    it (a modal dialog takes the mouse and keyboard). Scripted FCOP_INPUT events go through it too. */
 extern int (*win_event_hook)(const SDL_Event *e);

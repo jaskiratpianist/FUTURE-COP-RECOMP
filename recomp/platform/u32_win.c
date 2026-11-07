@@ -2,6 +2,7 @@
  * Window management, message loop, input and frame presentation.
  */
 #define _GNU_SOURCE
+#include <math.h>
 #include <ctype.h>
 #include <pthread.h>
 #include <sched.h>
@@ -111,6 +112,8 @@ struct WinInternal {
     int tex_w, tex_h;
     Uint32 tex_format;
     int logical_set;
+    SDL_Texture *crt;  /* CRT filter overlay (crt_draw), at the picture's size in screen pixels */
+    int crt_w, crt_h;
 };
 
 #define MAX_WINDOWS 64
@@ -326,8 +329,9 @@ static u32 send_message_direct(u32 hwnd, u32 msg, u32 wparam, u32 lparam)
             /* Default WM_CLOSE calls DestroyWindow */
             if (w) {
                 if (w->win.sdl) {
-                    if (w->renderer) { SDL_DestroyRenderer(w->renderer); w->renderer = NULL; }
                     if (w->texture) { SDL_DestroyTexture(w->texture); w->texture = NULL; }
+                    if (w->crt) { SDL_DestroyTexture(w->crt); w->crt = NULL; }
+                    if (w->renderer) { SDL_DestroyRenderer(w->renderer); w->renderer = NULL; }
                     SDL_DestroyWindow(w->win.sdl);
                     w->win.sdl = NULL;
                 }
@@ -1107,6 +1111,7 @@ static int fps_max(void);
 static int vsync_wanted(void);
 static u64 pace_now(void);
 static void fps_counter_draw(u32 *dst, int pitch, int w, int h);
+static void crt_draw(struct WinInternal *wi, int w, int h);
 static u64 present_us;  /* how long the last SDL_RenderPresent took (FCOP_FPS_LOG) */
 static u64 pace_work_us;
 
@@ -1193,6 +1198,11 @@ void win_show(const void *pixels, int w, int h, int pitch_bytes, int bits, u32 r
         }
     }
     if (!win_int->renderer) return;
+    {
+        static int told;
+        SDL_RendererInfo ri;
+        if (!told++ && !SDL_GetRendererInfo(win_int->renderer, &ri)) plat_log("renderer: %s", ri.name);
+    }
 
     int size_changed = (win_int->tex_w != w || win_int->tex_h != h);
     if (!win_int->texture || size_changed || win_int->tex_format != format) {
@@ -1226,12 +1236,109 @@ void win_show(const void *pixels, int w, int h, int pitch_bytes, int bits, u32 r
         SDL_UpdateTexture(win_int->texture, NULL, pixels, pitch_bytes);
     }
     SDL_RenderClear(win_int->renderer);
+    SDL_SetTextureBlendMode(win_int->texture, SDL_BLENDMODE_NONE);
     SDL_RenderCopy(win_int->renderer, win_int->texture, NULL, NULL);
+    if (win_crt_filter) crt_draw(win_int, w, h);
+    {   /* FCOP_SCREEN_SHOT=file.ppm: the last picture shown, as the screen has it (CRT filter, FPS
+           counter), rewritten at every present (slows the game, like FCOP_SHOT) */
+        static const char *path;
+        static int on = -1;
+        if (on < 0) on = (path = getenv("FCOP_SCREEN_SHOT")) != NULL;
+        if (on) {
+            int ow = 0, oh = 0;
+            SDL_GetRendererOutputSize(win_int->renderer, &ow, &oh);
+            u8 *buf = ow > 0 && oh > 0 ? malloc((size_t)ow * oh * 3) : NULL;
+            FILE *f;
+            int rd = -1;
+            if (buf) {  /* read in screen pixels: SDL applies the logical size's scale and viewport otherwise */
+                SDL_Rect all = {0, 0, ow, oh};
+                SDL_RenderSetLogicalSize(win_int->renderer, 0, 0);
+                SDL_RenderSetScale(win_int->renderer, 1.0f, 1.0f);
+                SDL_RenderSetViewport(win_int->renderer, NULL);
+                rd = SDL_RenderReadPixels(win_int->renderer, &all, SDL_PIXELFORMAT_RGB24, buf, ow * 3);
+                SDL_RenderSetLogicalSize(win_int->renderer, w, h);
+            }
+            if (!rd && (f = fopen(path, "wb"))) {
+                fprintf(f, "P6\n%d %d\n255\n", ow, oh);
+                fwrite(buf, 3, (size_t)ow * oh, f);
+                fclose(f);
+            }
+            free(buf);
+        }
+    }
     {
         u64 t0 = pace_now();
         SDL_RenderPresent(win_int->renderer);
         present_us = pace_now() - t0;
     }
+}
+
+/* Preferences "CRT Filter" (registry CRTFilter): a look of an old monitor, for aesthetics only.
+   Drawn by the renderer over the shown picture, so the game's frame and FCOP_SHOT never have it:
+   an overlay at the picture's size in screen pixels multiplies in scanlines, an aperture grille
+   (columns tinted red, green, blue in turn) and darker corners; then the picture is added again
+   faintly, which wins back the lost brightness and lets bright parts bleed over the dark lines
+   like a real tube. The overlay is made once per screen size; each frame costs two GPU draws. */
+int win_crt_filter;
+
+static void crt_build(struct WinInternal *wi, int vw, int vh, int h)
+{
+    static float *row, *col;
+    void *tp;
+    int tpitch, lines = h;
+    float period;
+    if (wi->crt) SDL_DestroyTexture(wi->crt);
+    wi->crt = SDL_CreateTexture(wi->renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, vw, vh);
+    wi->crt_w = vw, wi->crt_h = vh;
+    if (!wi->crt) return;
+    SDL_SetTextureBlendMode(wi->crt, SDL_BLENDMODE_MOD);
+    SDL_SetTextureScaleMode(wi->crt, SDL_ScaleModeNearest);
+    /* a scanline for each picture line while a line gets at least 3 screen pixels, else for every
+       2nd or 4th (1280x960 on a 1080-pixel screen: 240 lines of 4.5 pixels) */
+    while (lines > 120 && (float)vh / lines < 3.0f) lines /= 2;
+    period = (float)vh / lines;
+    free(row); free(col);
+    row = malloc(sizeof *row * (size_t)vh);
+    col = malloc(sizeof *col * 3 * (size_t)vw);
+    if (!row || !col || SDL_LockTexture(wi->crt, NULL, &tp, &tpitch)) return;
+    for (int y = 0; y < vh; y++) {
+        float t = fmodf((y + 0.5f) / period, 1.0f);           /* 0..1 across one line */
+        float lit = 0.5f - 0.5f * cosf(6.2831853f * t);       /* 1 in the line's middle, 0 between lines */
+        float v = (y + 0.5f) / vh;
+        row[y] = (0.55f + 0.45f * powf(lit, 0.6f)) * powf(4.0f * v * (1.0f - v), 0.12f);
+    }
+    for (int x = 0; x < vw; x++) {
+        float u = (x + 0.5f) / vw, vig = powf(4.0f * u * (1.0f - u), 0.12f);
+        for (int ch = 0; ch < 3; ch++) col[x * 3 + ch] = vig * (x % 3 == ch ? 1.0f : 0.72f);
+    }
+    for (int y = 0; y < vh; y++) {
+        u32 *d = (u32 *)((u8 *)tp + (size_t)y * tpitch);
+        for (int x = 0; x < vw; x++) {
+            u32 r = (u32)(255.0f * row[y] * col[x * 3] + 0.5f), g = (u32)(255.0f * row[y] * col[x * 3 + 1] + 0.5f),
+                b = (u32)(255.0f * row[y] * col[x * 3 + 2] + 0.5f);
+            d[x] = 0xff000000u | r << 16 | g << 8 | b;
+        }
+    }
+    SDL_UnlockTexture(wi->crt);
+    plat_log("CRT filter: %dx%d screen pixels, %d scanlines", vw, vh, lines);
+}
+
+static void crt_draw(struct WinInternal *wi, int w, int h)
+{
+    int ow = 0, oh = 0, vw, vh;
+    float scale;
+    if (SDL_GetRendererOutputSize(wi->renderer, &ow, &oh) || ow <= 0 || oh <= 0) return;
+    scale = (float)ow / w < (float)oh / h ? (float)ow / w : (float)oh / h;  /* as SDL's logical size letterboxes */
+    vw = (int)(w * scale + 0.5f);
+    vh = (int)(h * scale + 0.5f);
+    if (vw < 8 || vh < 8) return;
+    if (!wi->crt || wi->crt_w != vw || wi->crt_h != vh) crt_build(wi, vw, vh, h);
+    if (!wi->crt) return;
+    SDL_RenderCopy(wi->renderer, wi->crt, NULL, NULL);
+    SDL_SetTextureBlendMode(wi->texture, SDL_BLENDMODE_ADD);
+    SDL_SetTextureAlphaMod(wi->texture, 64);
+    SDL_RenderCopy(wi->renderer, wi->texture, NULL, NULL);
+    SDL_SetTextureAlphaMod(wi->texture, 255);
 }
 
 /* Mission frame pacing. The game moves everything by the ticks (1/300 s) that passed, so any
@@ -1549,8 +1656,9 @@ static u32 imp_DestroyWindow(Cpu *c)
     send_message_direct(hwnd, WM_NCDESTROY, 0, 0);
 
     if (w->win.sdl) {
-        if (w->renderer) { SDL_DestroyRenderer(w->renderer); w->renderer = NULL; }
         if (w->texture) { SDL_DestroyTexture(w->texture); w->texture = NULL; }
+        if (w->crt) { SDL_DestroyTexture(w->crt); w->crt = NULL; }
+        if (w->renderer) { SDL_DestroyRenderer(w->renderer); w->renderer = NULL; }
         SDL_DestroyWindow(w->win.sdl);
         w->win.sdl = NULL;
     }

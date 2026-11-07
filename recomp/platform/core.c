@@ -9,6 +9,7 @@
 #include "host.h"
 void win_set_fps(int max);  /* u32_win.c */
 extern int win_fps_counter;
+extern int win_crt_filter;
 
 /* guest address space layout */
 #define TIB_ADDR    0x00010000u
@@ -460,6 +461,10 @@ int main(int argc, char **argv)
         const char *fps = getenv("FCOP_FPS"), *max = getenv("FCOP_FPS_MAX");
         win_set_fps(max && *max ? atoi(max) : reg_setting("FrameRate", 90));
         win_fps_counter = reg_setting("ShowFPS", 0) != 0;
+        {   /* FCOP_CRT=0/1 overrides the Preferences setting for this run */
+            const char *crt = getenv("FCOP_CRT");
+            win_crt_filter = crt && *crt ? atoi(crt) != 0 : reg_setting("CRTFilter", 0) != 0;
+        }
         if (fps) {
             int f = atoi(fps);
             rt_frame_ticks = f > 0 ? (u32)((300 + f / 2) / f) : 8;
