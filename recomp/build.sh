@@ -6,6 +6,7 @@
 #   DEBUG=1 ./recomp/build.sh         with debug info (for gdb)
 #   SYSTEM_SDL=1 ./recomp/build.sh    link the system's shared SDL2 instead of building it
 #   OPT=-O1 ./recomp/build.sh         other optimisation flags
+#   JOBS=6 ./recomp/build.sh          compile at most 6 files at once (default: one per core)
 #   TARGET=windows ./recomp/build.sh  fcop.exe for 64-bit Windows (cross-compiled; downloads the
 #                                     llvm-mingw toolchain once, into build/llvm-mingw)
 #
@@ -77,7 +78,7 @@ mkdir -p $OBJ
 [ "$(cat $OBJ/flags 2>/dev/null)" = "$CFLAGS" ] || { rm -f $OBJ/*.o; echo "$CFLAGS" > $OBJ/flags; }
 HDR=$(ls -t recomp/rt/*.h recomp/platform/*.h | head -1)  # newest header
 export B OBJ CC CFLAGS HDR
-ls $B/gen/*.c recomp/rt/rt.c recomp/platform/*.c | xargs -P "$(nproc)" -I{} sh -c '
+ls $B/gen/*.c recomp/rt/rt.c recomp/platform/*.c | xargs -P "${JOBS:-$(nproc)}" -I{} sh -c '
     o=$OBJ/$(basename {} .c).o
     case {} in $B/gen/*) dep=recomp/rt/cpu.h ;; *) dep=$HDR ;; esac
     if [ "$o" -nt {} ] && [ "$o" -nt $dep ]; then exit 0; fi

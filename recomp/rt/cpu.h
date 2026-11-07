@@ -36,6 +36,9 @@ extern u32 rt_frame_ticks;  /* the mission loop's frame time in 1/300 s (x86c FR
 extern u32 (*rt_frame_hook)(u32 ticks);
 /* when set, replaces the game clock the mission loop reads for a frame (x86c FPS_PATCH 0x406a56) */
 extern u32 (*rt_clock_hook)(u32 clock);
+/* x86c FPS_PATCH: 1 once per period ticks of the mission clock (0x511ee4) for each object, for
+   things the game did every n-th frame (n frames of 8 ticks = period) */
+int rt_every(u32 obj, u32 period);
 
 static inline u8  rd8(u32 a)  { return MEM[a]; }
 static inline u16 rd16(u32 a) { u16 v; memcpy(&v, MEM + a, 2); return v; }
@@ -64,6 +67,9 @@ static inline void wrf64(u32 a, double v) { memcpy(MEM + a, &v, 8); }
 #ifdef RECOMP_TRACE  /* log every instruction with the registers before it runs */
 void rt_trace(u32 a, u32 eax, u32 ecx, u32 edx, u32 ebx, u32 esp, u32 ebp, u32 esi, u32 edi);
 #define TR(a) rt_trace(a, eax, ecx, edx, ebx, esp, ebp, esi, edi)
+#elif defined(RECOMP_COVER)  /* mark every instruction that runs; FCOP_COVER=file saves the bitmap at exit */
+extern unsigned char rt_cover[];
+#define TR(a) (rt_cover[(a) >> 3] |= (unsigned char)(1u << ((a) & 7)))
 #else
 #define TR(a) ((void)0)
 #endif

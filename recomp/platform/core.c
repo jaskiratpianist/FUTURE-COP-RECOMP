@@ -448,6 +448,11 @@ static int load_exe(const char *path)
     return 0;
 }
 
+/* FCOP_TICKS=N: the game clock of a mission frame is the last frame's (0x511e4c) plus N, so frames
+   advance exactly N ticks however long they take to draw (deterministic frame-rate tests) */
+static u32 fake_ticks;
+static u32 fake_clock(u32 clock) { (void)clock; return rd32(0x511e4cu) + fake_ticks; }
+
 int main(int argc, char **argv)
 {
     static Cpu c0;
@@ -459,7 +464,13 @@ int main(int argc, char **argv)
            fps): the Preferences setting, or FCOP_FPS_MAX (0 = unlimited, 37 = original).
            FCOP_FPS=N waits for whole ticks instead, as the original does, without pacing. */
         const char *fps = getenv("FCOP_FPS"), *max = getenv("FCOP_FPS_MAX");
-        win_set_fps(max && *max ? atoi(max) : reg_setting("FrameRate", 90));
+        {   /* the menu offers up to 120: above that (and unlimited) explosion glows turn green, a
+               bug not found yet. A saved Unlimited (0) or higher rate becomes 120; FCOP_FPS_MAX
+               (0 = unlimited) stays for tests. */
+            int saved = reg_setting("FrameRate", 90);
+            if (saved <= 0 || saved > 120) saved = 120;
+            win_set_fps(max && *max ? atoi(max) : saved);
+        }
         win_fps_counter = reg_setting("ShowFPS", 0) != 0;
         {   /* FCOP_CRT=0/1 overrides the Preferences setting for this run */
             const char *crt = getenv("FCOP_CRT");
@@ -471,6 +482,13 @@ int main(int argc, char **argv)
             if (rt_frame_ticks < 1) rt_frame_ticks = 1;
             rt_frame_hook = NULL;
             rt_clock_hook = NULL;
+        }
+        if (getenv("FCOP_TICKS")) {  /* tests: every mission frame advances exactly N ticks of game time */
+            int t = atoi(getenv("FCOP_TICKS"));
+            fake_ticks = t > 0 && t <= 60 ? (u32)t : 8u;
+            rt_frame_ticks = fake_ticks;
+            rt_frame_hook = NULL;
+            rt_clock_hook = fake_clock;
         }
     }
     MEM = os_reserve(1ull << 32);

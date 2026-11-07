@@ -115,7 +115,7 @@ folder) are copied into `user_info/` on the first start.
   switches between fullscreen and a window at any time; the window can be resized.
 - **Frame rate**: the original game runs missions at 37.5 frames per second. **Preferences >
   Frame Rate** raises that (up to 90 by default, matched to your screen's refresh rate so
-  motion stays even), up to Unlimited, or back to the original 37.5. The game plays at the
+  motion stays even), up to 120, or back to the original 37.5. The game plays at the
   same speed either way. **Show FPS Counter** shows the frame rate in missions.
 - **CRT Filter** (Preferences) gives the picture the look of an old monitor: scanlines,
   a phosphor pattern and slightly darker corners. It only changes how the picture looks.
@@ -127,7 +127,7 @@ Optional environment variables:
 | `FCOP_SKIP_VIDEOS=1` | Skip all videos (intro, briefings) |
 | `FCOP_WINDOW_H=<pixels>` | Starting window height (default: 3/4 of the screen) |
 | `FCOP_GAME_DIR=<folder>` | Use the game files in this folder instead of `game_files/` (same as giving the folder on the command line) |
-| `FCOP_FPS_MAX=<n>` | Mission frame rate cap for this run, overriding Preferences (`0` unlimited, `37` the original) |
+| `FCOP_FPS_MAX=<n>` | Mission frame rate cap for this run, overriding Preferences (`37` the original; `0` unlimited, for testing only) |
 
 ## How it works
 
@@ -149,7 +149,7 @@ Details and milestones: [docs/RECOMP_PLAN.md](docs/RECOMP_PLAN.md).
 - [x] Playable missions with keyboard, mouse and gamepad, sound, music and videos
 - [x] The game's dialogs (preferences, controller configuration, audio, pause, load/save, quit) redrawn in the game's style
 - [x] Resolutions up to 1280x960, fullscreen, resizable window
-- [x] Missions above the original 37.5 fps (up to unlimited) at the same game speed
+- [x] Missions above the original 37.5 fps (up to 120) at the same game speed
 - [x] One self-contained executable that installs the game files from the CD image
 - [x] Windows build (cross-compiled; tested in a Windows virtual machine)
 - [ ] Android build

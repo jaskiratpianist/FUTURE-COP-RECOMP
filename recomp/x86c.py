@@ -230,6 +230,10 @@ class Gen:
         # steps instead (8 and 4 per step: the same over time)
         0x445b38: ("mov eax, dword ptr [esp + 0x60]", "if (rt_frame_hook || rt_frame_ticks < 8u) eax = rd32(esp + 0x64u) * 2u; else {{ {code} }}"),
         0x445bcd: ("mov eax, dword ptr [esp + 0x54]", "if (rt_frame_hook || rt_frame_ticks < 8u) eax = rd32(esp + 0x58u) * 2u; else {{ {code} }}"),
+        # Rockets (FUN_00418860) leave a trail puff (FUN_00418b50) every 4th frame (frame counter
+        # 0x511f40), every 32 ticks at 37.5 fps: 1.6x as many at 60 fps, 3.2x at 120. Every 32
+        # ticks of game time instead.
+        0x418af9: ("mov ecx, dword ptr [0x511f40]", "if (rt_frame_hook || rt_frame_ticks < 8u) ecx = rt_every(esi, 32u) ? 3u : 0u; else {{ {code} }}"),
         # the game clock a mission frame runs on (ticks since the last frame, and ~70 animations read
         # it): u32_win.c win_frame_clock makes it the time the frame will be shown
         0x406a56: ("mov dword ptr [0x511ee4], eax", "if (rt_clock_hook) eax = rt_clock_hook(eax); {code}"),

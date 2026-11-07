@@ -84,6 +84,9 @@ appears on screen:
 real Windows. Don't dump frames (FCOP_SHOT) to measure fps under Wine: its file writes cut it to 21.
 Memory: difftest.py starts a compiler for every source at once and a worker per core; run it
 with `-j 6` and nothing else heavy (the defaults plus two builds ran the machine out of memory).
+`JOBS=6 ./recomp/build.sh` limits a build to 6 compiles at once. VS Code's C/C++ extension once grew
+to 24 GB indexing the generated C while it was being rewritten: `.vscode/settings.json` (local,
+in .git/info/exclude) keeps it, search and file watching out of build/.
 
 ## How the recompiled code works
 
@@ -187,10 +190,11 @@ own test run (`plat_test.py` is headless; `--png`, `--audio`, `--input`).
   dialogs, so Esc presses a "Cancel"/"Resume..." button. `build/dialogs.txt` (made by a
   throwaway decoder, not committed) lists every control.
 - Port settings in Preferences (dialog 101): dialog.c hides Processor Select and puts our own
-  controls in the gap, "Frame Rate (missions)" (37.5 original, up to 60/90/120/144/165/240,
-  Unlimited) and "Show FPS Counter". Their ids start at PORT_ID 0x7f00; every message to the
+  controls in the gap, "Frame Rate (missions)" (37.5 original, up to 60/90/120; higher rates and
+  Unlimited were removed 2026-11-07, see "Green explosion glows" below) and "Show FPS Counter". Their ids start at PORT_ID 0x7f00; every message to the
   game's dialog procedure goes through `dlg_call`, which keeps them away from it. OK saves them
-  (registry Settings `FrameRate`: 37 = original, 0 = unlimited, else the cap; `ShowFPS`) and
+  (registry Settings `FrameRate`: 37 = original, else the cap; a saved 0 = unlimited or anything
+  above 120 is read as 120 (core.c); `ShowFPS`) and
   applies them at once (u32_win.c `win_set_fps`, which also switches vsync). Preferences only
   opens from the main menu (the pause bar has no button for it), so the rate never changes
   mid-mission. FCOP_FPS_MAX / FCOP_FPS override the saved rate for tests. The counter is drawn
@@ -284,8 +288,21 @@ each (0x442698: now 8); FUN_004456a0 eases heading/aim toward the target in 2-ti
 (0x445eb0) but capped the move at ticks*4 / ticks*2 a frame (0x445bcd, 0x445b38: now steps*8 / *4).
 Measured with `peek=4a1b9c` (player heading) every 100 ms: identical at 37.5, 82.5, unlimited;
 walking unchanged (its run-to-run spread is +-32 from input timing).
-Still frame-based but probably only cosmetic: 0x418af9 calls 0x418b50 (spawns something, smoke or
-similar) every 4th frame (frame counter 0x511f40), so 1.6x as often at 60 fps.
+Rocket trails: 0x418af9 called 0x418b50 (a trail puff) every 4th frame (frame counter 0x511f40);
+x86c FPS_PATCH makes it every 32 ticks of game time per rocket (rt.c `rt_every`).
+
+**Green explosion glows (open bug, 2026-11-07).** At 3 or fewer ticks a frame (above ~85 fps) the
+Hell Fire hit glow turns green as it grows (the user's video: first mission start, rockets at the wall
+by the "Load Up Bar" sign); at 4+ ticks it is right, also in the Windows build. Hence the 120 cap
+(120 fps still alternates 2-3 ticks: the cap limits it, it does not cure it). Reproduce with
+`FCOP_TICKS=N` (core.c: every mission frame advances exactly N ticks however long it takes) and
+`FCOP_INPUT="9000:click@484,303 22000:Down*6000"` (Down = Hell Fire with the user's bindings), count
+greenish pixels in FCOP_SHOT frames. Ruled out: code paths (a coverage build, cpu.h `RECOMP_COVER` +
+`FCOP_COVER=file`, ran the same instructions at 3 and 4 ticks), the glow light's colour (0x42e8f0 /
+0x42ebd0 fade its RGB at light+9..+0xb correctly at 1 tick, also with remainders carried), the draw
+call 0x436e20 (no light greener than red during the hit), rocket trails, Texture Coloring. Forcing
+>= 4 ticks into the object update 0x42daf0 (from 0x42d6d0) removed it, but that also ages objects
+faster. Next: find which draw puts the green pixels on screen and trace back from there.
 
 ## Performance (measured 2026-10-19, mission at 1280x960, game capped at 37 fps)
 

@@ -890,7 +890,6 @@ static void render_all_dialogs(void)
    units of the final layout (Controller and Audio move up 34 units). Also the CRT filter. */
 static const struct { int fps; const char *name; } fps_choices[] = {
     {37, "37.5 (original)"}, {60, "Up to 60"}, {90, "Up to 90"}, {120, "Up to 120"},
-    {144, "Up to 144"}, {165, "Up to 165"}, {240, "Up to 240"}, {0, "Unlimited"},
 };
 
 static struct Control *add_port_ctrl(struct Dialog *dlg, int type, u32 id, int x, int y, int w, int h, const char *text)

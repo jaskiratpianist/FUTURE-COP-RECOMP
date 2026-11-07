@@ -10,6 +10,19 @@ u32 rt_frame_ticks = 8;
 u32 (*rt_frame_hook)(u32 ticks);
 u32 (*rt_clock_hook)(u32 clock);
 
+/* rt_every: the period number (clock / period) each object last fired in. A new or reused object
+   (or a collision) fires at once, as the original's frame counter could on the next frame. Only
+   the main thread updates the game's objects. */
+int rt_every(u32 obj, u32 period)
+{
+    static struct { u32 key, n; } t[4096];
+    u32 h = (obj * 2654435761u) >> 20, n = rd32(0x511ee4u) / period;
+    if (t[h].key == obj && t[h].n == n) return 0;
+    t[h].key = obj;
+    t[h].n = n;
+    return 1;
+}
+
 struct entry { u32 addr; void (*fn)(Cpu *); };
 extern const struct entry recomp_table[];
 extern const unsigned recomp_table_len;
@@ -152,3 +165,14 @@ void rt_rdtsc(Cpu *c)
 /* hardware ports (the game polls the gameport at 0x201): nothing is connected */
 u32 rt_in(Cpu *c, u32 port, int size) { (void)c; (void)port; return size == 1 ? 0xff : 0xffffffffu; }
 void rt_out(Cpu *c, u32 port, u32 v, int size) { (void)c; (void)port; (void)v; (void)size; }
+
+#ifdef RECOMP_COVER
+/* coverage builds: one bit per code address (0..0x600000), written to FCOP_COVER at exit */
+unsigned char rt_cover[0x600000 >> 3];
+__attribute__((destructor)) static void rt_cover_save(void)
+{
+    const char *p = getenv("FCOP_COVER");
+    FILE *f = p ? fopen(p, "wb") : NULL;
+    if (f) { fwrite(rt_cover, 1, sizeof rt_cover, f); fclose(f); }
+}
+#endif
