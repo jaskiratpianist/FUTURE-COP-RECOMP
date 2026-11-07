@@ -1335,6 +1335,14 @@ u32 win_frame_clock(u32 clock)
     return slot + (u32)pace_clock_ofs;
 }
 
+/* before a mission frame is presented: wait for its slot, one period after the last one. Sleeps
+   (1 ms steps) stop this long before the slot and the rest is spun: Windows sleeps can run a
+   millisecond or two over even at SDL's 1 ms timer resolution */
+#ifdef _WIN32
+#define PACE_SPIN_US 2500u
+#else
+#define PACE_SPIN_US 1200u
+#endif
 /* before a mission frame is presented: wait for its slot, one period after the last one */
 static void present_paced(void)
 {
@@ -1342,7 +1350,7 @@ static void present_paced(void)
     pace_work_us = pace_start ? now - pace_start : 0;
     if (!pace_period || pace_unlimited || now - pace_mission_us > 100000u) { pace_next = 0; pace_clock_ofs = 0; return; }  /* menus */
     if (pace_next && now < pace_next) {
-        while (pace_now() + 1200u < pace_next) {
+        while (pace_now() + PACE_SPIN_US < pace_next) {
             struct timespec req = {0, 1000000};
             nanosleep(&req, NULL);
         }

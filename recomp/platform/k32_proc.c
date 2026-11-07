@@ -5,6 +5,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include "host.h"
+#ifdef _WIN32  /* Windows has no setenv; an empty value removes a variable */
+static int setenv(const char *n, const char *v, int overwrite) { (void)overwrite; return _putenv_s(n, v); }
+static int unsetenv(const char *n) { return _putenv_s(n, ""); }
+#endif
 
 /* ---- Version & Module Info ----------------------------------------------------------- */
 

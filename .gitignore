@@ -5,6 +5,7 @@ game_files/*
 # build output, including the C generated from the retail EXE (derived from copyrighted code)
 build/
 /fcop
+/fcop.exe
 .venv/
 __pycache__/
 *.pyc

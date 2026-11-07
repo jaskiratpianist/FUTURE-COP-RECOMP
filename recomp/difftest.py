@@ -35,7 +35,7 @@ class Cpu(ctypes.Structure):
     _fields_ = [("r", ctypes.c_uint32 * 8), ("fs_base", ctypes.c_uint32), ("df", ctypes.c_uint32),
                 ("st", ctypes.c_double * 8), ("top", ctypes.c_uint32), ("sw", ctypes.c_uint16),
                 ("cw", ctypes.c_uint16), ("mm", ctypes.c_uint64 * 8), ("fl", ctypes.c_uint32 * 5),
-                ("sti", ctypes.c_int64 * 8), ("stx", ctypes.c_uint8 * 8)]
+                ("sti", ctypes.c_int64 * 8), ("stx", ctypes.c_uint8 * 8), ("jmp", ctypes.c_uint32)]
 
 
 def build_lib(trace=False):
@@ -47,9 +47,10 @@ def build_lib(trace=False):
     srcs = sorted(os.path.join(gen, f) for f in os.listdir(gen) if f.endswith(".c"))
     srcs += [os.path.join(rt, "rt.c"), os.path.join(rt, "harness.c")]
     procs = []
+    hdr = os.path.getmtime(os.path.join(rt, "cpu.h"))  # every object depends on it (the Cpu struct)
     for s in srcs:
         o = os.path.join(objs, os.path.basename(s)[:-2] + ".o")
-        if not os.path.exists(o) or os.path.getmtime(o) < os.path.getmtime(s):
+        if not os.path.exists(o) or os.path.getmtime(o) < max(os.path.getmtime(s), hdr):
             procs.append(subprocess.Popen(["gcc", "-O1", "-fPIC", "-w", "-c", f"-I{rt}", f"-I{gen}", s, "-o", o]
                                           + (["-DRECOMP_TRACE"] if trace else [])))
     if any(p.wait() for p in procs):

@@ -6,6 +6,13 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
+#ifndef O_BINARY
+#define O_BINARY 0  /* Windows: no text-mode translation of the game's files */
+#endif
+#ifdef _WIN32
+#include <io.h>
+#define fsync _commit
+#endif
 #include "host.h"
 
 #define GENERIC_READ    0x80000000u
@@ -100,7 +107,7 @@ static u32 imp_CreateFileA(Cpu *c)
         break;
     }
 
-    int fd = open(hpath, oflags, 0666);
+    int fd = open(hpath, oflags | O_BINARY, 0666);
     if (fd < 0) {
         if (errno == ENOENT) {
             char dir[1024];
@@ -128,7 +135,11 @@ static u32 imp_CreateFileA(Cpu *c)
     }
 
     if (fd == 0) {
+#ifdef _WIN32
+        int fd2 = dup(0);
+#else
         int fd2 = fcntl(0, F_DUPFD, 3);
+#endif
         close(0);
         fd = fd2;
     }

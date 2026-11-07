@@ -66,6 +66,25 @@ skip the static SDL2); run: `./fcop`. The executable is self-contained (only lib
 `game_files/` and `user_info/` next to itself (SDL_GetBasePath); a folder given as argv[1] or
 `FCOP_GAME_DIR` overrides game_files (plat_test.py does that), an image file as argv[1] installs it.
 
+Windows: `TARGET=windows ./recomp/build.sh` cross-compiles `fcop.exe` (64-bit, static: only
+Windows' own DLLs, UCRT included in Windows 10+). It downloads llvm-mingw (clang + MinGW-w64,
+pinned version and sha256) into build/llvm-mingw once and builds SDL2 from the same source tarball
+into build/sdl2-win; objects go to build/recomp/obj_win. Everything OS-specific that needs
+windows.h lives in platform/os.c (`os_reserve`/`os_commit` for guest memory: the heap is committed in
+16 MB steps as galloc grows it, because Windows charges committed memory to the page file;
+`os_pick_image` = GetOpenFileName, `os_open_folder`, `os_mkdir`, `os_log_init`: without a console the
+log goes to user_info/fcop.log). k32_file.c opens files O_BINARY; k32_proc.c has setenv shims.
+clang's musttail needs the caller's exact signature, so generated jumps through dispatch store the
+target in `c->jmp` and tail-call `dispatch_jmp(c)`. sdl2-config adds `-Dmain=SDL_main` on Windows:
+build.sh strips it (our main is plain, no SDL2main). Pacing spins the last 2.5 ms before a slot on
+Windows (sleeps overshoot). Test headless under Wine with its own prefix and no display, so nothing
+appears on screen:
+`WINEPREFIX=$PWD/build/wine WINEDLLOVERRIDES="mscoree,mshtml=" WINEDEBUG=-all env -u DISPLAY -u WAYLAND_DISPLAY SDL_VIDEODRIVER=offscreen SDL_AUDIODRIVER=dummy FCOP_SKIP_VIDEOS=1 wine fcop.exe "Z:$PWD/game_files/FCopLAPD"`
+(2026-11-07: menus, mission at 1280x960, input, 60 fps paced, 75 fps unlimited). Not yet tried on
+real Windows. Don't dump frames (FCOP_SHOT) to measure fps under Wine: its file writes cut it to 21.
+Memory: difftest.py starts a compiler for every source at once and a worker per core; run it
+with `-j 6` and nothing else heavy (the defaults plus two builds ran the machine out of memory).
+
 ## How the recompiled code works
 
 - Guest memory is one 4 GB reservation; guest address `a` is `MEM + a`. The EXE's sections

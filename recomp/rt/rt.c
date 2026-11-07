@@ -25,17 +25,23 @@ __attribute__((weak)) void rt_foreign(Cpu *c, u32 addr)
 int rt_poll;
 __attribute__((weak)) void rt_yield(Cpu *c) { (void)c; }
 
-void dispatch(Cpu *c, u32 addr)
+void dispatch_jmp(Cpu *c)
 {
+    u32 addr = c->jmp;
     unsigned lo = 0, hi = recomp_table_len;
     while (lo < hi) {
         unsigned mid = (lo + hi) / 2;
         if (recomp_table[mid].addr < addr) lo = mid + 1; else hi = mid;
     }
     if (lo < recomp_table_len && recomp_table[lo].addr == addr)
-        recomp_table[lo].fn(c);
-    else
-        rt_foreign(c, addr);
+        TAILCALL(recomp_table[lo].fn(c));
+    rt_foreign(c, addr);
+}
+
+void dispatch(Cpu *c, u32 addr)
+{
+    c->jmp = addr;
+    dispatch_jmp(c);
 }
 
 __attribute__((weak)) void rt_trap(Cpu *c, u32 addr, const char *why)

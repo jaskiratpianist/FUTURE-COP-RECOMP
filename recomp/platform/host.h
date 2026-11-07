@@ -73,6 +73,14 @@ extern char game_dir[], user_dir[];
 const char *host_path(const char *guest_path, char *buf, size_t n);
 int setup_paths(int argc, char **argv);  /* finds or installs the game files; 0 when ready */
 
+/* what differs between Linux and Windows (os.c) */
+void *os_reserve(u64 size);                 /* address space only; NULL on failure */
+int os_commit(void *p, u64 size);           /* make it usable, zero-filled; 0 on success */
+int os_mkdir(const char *path);             /* 0 if the folder exists afterwards */
+void os_log_init(const char *user_dir);     /* Windows without a console: log to fcop.log */
+int os_pick_image(char *out, size_t n);     /* file chooser: 1 chosen, 0 cancelled, -1 none */
+int os_open_folder(const char *dir);        /* show it in the file manager; 0 on success */
+
 /* a debugging switch from the environment, looked up once (getenv scans the whole environment,
    and some of these are asked on every Blt or key poll) */
 #define ENV_ON(name) ({ static int env_on_ = -1; if (env_on_ < 0) env_on_ = getenv(name) != NULL; env_on_; })

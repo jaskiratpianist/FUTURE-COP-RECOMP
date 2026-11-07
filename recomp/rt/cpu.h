@@ -26,6 +26,7 @@ typedef struct Cpu {
     u32 fl[5];         /* CF ZF SF OF PF, only passed along on jumps between functions */
     s64 sti[8];        /* exact value of a register loaded by fild m64 (doubles lose bits), */
     u8 stx[8];         /* valid while stx is set: the FPU memcpy idiom fild/fistp qword */
+    u32 jmp;           /* target of a jump through dispatch_jmp */
 } Cpu;
 
 extern u8 *MEM;
@@ -99,6 +100,8 @@ void rt_trace(u32 a, u32 eax, u32 ecx, u32 edx, u32 ebx, u32 esp, u32 ebp, u32 e
 
 /* runtime (rt.c) */
 void dispatch(Cpu *c, u32 addr);                 /* call guest code at addr (return address pushed) */
+void dispatch_jmp(Cpu *c);                       /* the same for c->jmp: a tail call to it is guaranteed
+                                                    (clang's musttail needs the caller's signature) */
 void rt_unimpl(Cpu *c, u32 addr, const char *what);
 void rt_trap(Cpu *c, u32 addr, const char *why);
 void rt_fcom(Cpu *c, double a, double b);        /* sets C0/C2/C3 */

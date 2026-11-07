@@ -9,11 +9,11 @@
  * dumps work too. Without an image the player can copy the CD into game_files/ by hand.
  */
 #define _GNU_SOURCE
+#define _FILE_OFFSET_BITS 64  /* fseeko on CD images; Windows has a 32-bit off_t otherwise */
 #include <SDL.h>
 #include <dirent.h>
 #include <errno.h>
 #include <sys/stat.h>
-#include <sys/wait.h>
 #include <unistd.h>
 #include "host.h"
 extern char font8x8_basic[128][8];  /* dialog.c includes the font */
@@ -370,7 +370,7 @@ static int extract_entry(void *ctx, const char *name, u32 lba, u32 size, int dir
     if (x->depth == 0 && x->game_only && strcasecmp(name, "FCopLAPD") && strcasecmp(name, "Video")) return 0;
     snprintf(path, sizeof path, "%s/%s", x->dir, name);
     if (dir) {
-        if (!x->counting && mkdir(path, 0755) && errno != EEXIST) return -1;
+        if (!x->counting && os_mkdir(path)) return -1;
         snprintf(saved, sizeof saved, "%s", x->dir);
         snprintf(x->dir, sizeof x->dir, "%s", path);
         x->depth++;
@@ -455,28 +455,6 @@ static int find_image(const char *dir, char *out, size_t n)
     return found;
 }
 
-/* the desktop's file chooser (zenity or kdialog on Linux) */
-static int pick_image(char *out, size_t n)
-{
-    static const char *const cmds[] = {
-        "zenity --file-selection --title='Choose your Future Cop CD image' "
-        "--file-filter='CD images | *.iso *.ISO *.cue *.CUE *.bin *.BIN *.img *.IMG' 2>/dev/null",
-        "kdialog --title 'Choose your Future Cop CD image' --getopenfilename . "
-        "'*.iso *.ISO *.cue *.CUE *.bin *.BIN *.img *.IMG' 2>/dev/null",
-    };
-    for (unsigned k = 0; k < sizeof cmds / sizeof cmds[0]; k++) {
-        FILE *p = popen(cmds[k], "r");
-        int status;
-        if (!p) continue;
-        if (!fgets(out, (int)n, p)) out[0] = 0;
-        status = pclose(p);
-        out[strcspn(out, "\n")] = 0;
-        if (WIFEXITED(status) && WEXITSTATUS(status) == 127) continue;  /* not installed */
-        return out[0] ? 1 : 0;  /* chosen, or cancelled */
-    }
-    return -1;
-}
-
 /* No game files yet: ask for the CD image. Returns its path, "" when the player copied the
    files into dest by hand meanwhile, or NULL to quit. */
 static const char *ask_image(const char *dest, char *buf, size_t n)
@@ -523,16 +501,14 @@ static const char *ask_image(const char *dest, char *buf, size_t n)
         case 0:
             return NULL;
         case 2: {
-            char cmd[1200];
-            snprintf(cmd, sizeof cmd, "xdg-open '%s' >/dev/null 2>&1 &", dest);
-            if (!strchr(dest, '\'') && system(cmd) == 0)
+            if (os_open_folder(dest) == 0)
                 snprintf(status, sizeof status, "Waiting for the files in that folder...");
             else
                 snprintf(status, sizeof status, "Could not open the folder.");
             break;
         }
         case 1:
-            switch (pick_image(buf, n)) {
+            switch (os_pick_image(buf, n)) {
             case 1:
                 if (is_game_image(buf)) return buf;
                 snprintf(status, sizeof status, "That file is not a Future Cop CD image.");
@@ -577,7 +553,7 @@ int setup_paths(int argc, char **argv)
     if (arg && is_dir(arg) && find_game(arg, 3, game_dir, 1024)) {
         /* a game folder given on the command line (tests, or files kept elsewhere) */
     } else if (!find_game(files, 3, game_dir, 1024)) {
-        if (mkdir(files, 0755) && errno != EEXIST) {
+        if (os_mkdir(files)) {
             plat_log("cannot create %s: %s", files, strerror(errno));
             return -1;
         }
@@ -609,13 +585,14 @@ int setup_paths(int argc, char **argv)
     }
 
     snprintf(user_dir, sizeof user_dir, "%s/user_info", base_dir);
-    if (mkdir(user_dir, 0755) && errno != EEXIST) {
+    if (os_mkdir(user_dir)) {
         /* the executable's folder is read-only: keep them in the user's data folder */
         char *pref = SDL_GetPrefPath("Electronic Arts", "Future Cop");
         snprintf(user_dir, sizeof user_dir, "%s", pref ? pref : ".");
         SDL_free(pref);
-        if (strlen(user_dir) > 1 && user_dir[strlen(user_dir) - 1] == '/') user_dir[strlen(user_dir) - 1] = 0;
+        if (strlen(user_dir) > 1 && strchr("/\\", user_dir[strlen(user_dir) - 1])) user_dir[strlen(user_dir) - 1] = 0;
     }
+    os_log_init(user_dir);
     adopt("registry.txt");
     adopt("controls.txt");
     adopt("save.cfg");

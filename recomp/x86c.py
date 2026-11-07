@@ -373,7 +373,7 @@ class Gen:
         if tgt in self.starts:
             return f"{{ SYNC; FSYNC; TAILCALL(F_{tgt:x}(c)); }}"
         # into the middle of other code: the caller's return address is already on the stack
-        return f"{{ SYNC; FSYNC; TAILCALL(dispatch(c, 0x{tgt:x}u)); }}"
+        return f"{{ SYNC; FSYNC; c->jmp = 0x{tgt:x}u; TAILCALL(dispatch_jmp(c)); }}"
 
     def call(self, i, target_expr, direct=None):
         nxt = i.address + i.size
@@ -764,7 +764,7 @@ class Gen:
                 return (f"{{ u32 t = {self.rd(i, op, 4)}; switch (t) {{ {cases} default: {self.jump_dyn(fn, 't')} }} }}")
             # tail jump through a pointer (import thunks, function pointers): the caller's
             # return address is already on the stack
-            return f"{{ u32 t = {self.rd(i, op, 4)}; SYNC; FSYNC; TAILCALL(dispatch(c, t)); }}"
+            return f"{{ u32 t = {self.rd(i, op, 4)}; SYNC; FSYNC; c->jmp = t; TAILCALL(dispatch_jmp(c)); }}"
         if m.startswith("j"):
             tgt = ops[0].imm & 0xFFFFFFFF
             cc = {"jecxz": "!ecx", "jcxz": "!(u16)ecx"}.get(m) or cond(m[1:])
@@ -897,7 +897,7 @@ class Gen:
         if getattr(fn, "dyn", False):
             out.insert(4, "    u32 dyn_t;")
             cases = " ".join(f"case 0x{a:x}u: goto L_{a:x};" for a in sorted(fn.ins))
-            out.append(f"dyn: switch (dyn_t) {{ {cases} default: SYNC; FSYNC; TAILCALL(dispatch(c, dyn_t)); }}")
+            out.append(f"dyn: switch (dyn_t) {{ {cases} default: SYNC; FSYNC; c->jmp = dyn_t; TAILCALL(dispatch_jmp(c)); }}")
         out.append("}")
         return fn, "\n".join(out)
 

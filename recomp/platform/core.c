@@ -5,7 +5,6 @@
 #include <pthread.h>
 #include <sched.h>
 #include <stdarg.h>
-#include <sys/mman.h>
 #include <unistd.h>
 #include "host.h"
 void win_set_fps(int max);  /* u32_win.c */
@@ -38,6 +37,10 @@ void plat_log(const char *fmt, ...)
 /* ---- guest heap: first-fit free list with 16-byte headers ---------------------------- */
 static pthread_mutex_t heap_lock = PTHREAD_MUTEX_INITIALIZER;
 static u32 arena_top = ARENA_LO;
+/* the heap's memory is committed in steps as it grows: Windows counts committed memory against
+   the page file even when it is never touched */
+#define ARENA_STEP 0x01000000u
+static u32 arena_committed = ARENA_LO + ARENA_STEP;
 struct blk { u32 size, next, free, magic; };   /* header just before the user block */
 #define BLK(p) ((struct blk *)(MEM + (p) - 16))
 #define MAGIC 0xfc0fb10cu
@@ -60,6 +63,11 @@ u32 galloc_aligned(u32 size, u32 align)
     if (!p) {
         u32 at = (arena_top + 16 + align - 1) & ~(align - 1);
         if (at + size > ARENA_HI) { pthread_mutex_unlock(&heap_lock); return 0; }
+        if (at + size > arena_committed) {
+            u32 to = (at + size + ARENA_STEP - 1) & ~(ARENA_STEP - 1);
+            if (os_commit(MEM + arena_committed, to - arena_committed)) { pthread_mutex_unlock(&heap_lock); return 0; }
+            arena_committed = to;
+        }
         p = at;
         arena_top = at + size;
         BLK(p)->size = size;
@@ -409,7 +417,7 @@ static u32 missing_stub(Cpu *c) { (void)c; return 0; }
 
 static void map(u32 lo, u32 hi)
 {
-    if (mprotect(MEM + lo, hi - lo, PROT_READ | PROT_WRITE)) { perror("mprotect"); exit(1); }
+    if (os_commit(MEM + lo, hi - lo)) { plat_log("cannot commit guest memory 0x%x-0x%x", lo, hi); exit(1); }
 }
 
 static int load_exe(const char *path)
@@ -460,12 +468,12 @@ int main(int argc, char **argv)
             rt_clock_hook = NULL;
         }
     }
-    MEM = mmap(NULL, 1ull << 32, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
-    if (MEM == MAP_FAILED) { perror("mmap 4GB"); return 1; }
+    MEM = os_reserve(1ull << 32);
+    if (!MEM) { plat_log("cannot reserve 4 GB of address space"); return 1; }
     map(TIB_ADDR, TIB_ADDR + 0x1000);
     map(STACK_LO, STACK_HI);
     map(IMAGE_LO, IMAGE_HI);
-    map(ARENA_LO, ARENA_HI);
+    map(ARENA_LO, ARENA_LO + ARENA_STEP);  /* the rest as the heap grows (galloc) */
     host_path("FCopLAPD.exe", exe, sizeof exe);  /* any letter case */
     if (load_exe(exe)) { plat_log("cannot read %s", exe); return 1; }
 
