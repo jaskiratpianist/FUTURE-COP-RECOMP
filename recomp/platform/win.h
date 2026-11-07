@@ -52,6 +52,16 @@ void win_overlay_set(const u16 *px, u32 rmask, u32 gmask, u32 bmask);
 void win_overlay_clear(void);
 /* the game's last presented 16-bit frame (w*h pixels, no padding); 0 if none yet */
 int win_last_frame(const u16 **px, int *w, int *h, int *is565);
+/* rt_frame_hook: start mission frames at the screen's refresh rate divided down to <= 60 fps */
+u32 win_frame_pace(u32 ticks);
+/* rt_clock_hook: the game clock for a mission frame, the time it will be shown */
+u32 win_frame_clock(u32 clock);
+/* mission frame rate (Preferences "Frame Rate", registry FrameRate): 37 is the original 37.5 fps,
+   0 unlimited, otherwise the most frames per second, paced to the screen's refresh */
+void win_set_fps(int max);
+int win_get_fps(void);
+/* Preferences "Show FPS Counter" (registry ShowFPS): frames per second in a corner in missions */
+extern int win_fps_counter;
 /* if set, plat_pump offers every SDL event (except SDL_QUIT) to it first; returning 1 consumes
    it (a modal dialog takes the mouse and keyboard). Scripted FCOP_INPUT events go through it too. */
 extern int (*win_event_hook)(const SDL_Event *e);

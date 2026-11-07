@@ -73,6 +73,14 @@ extern char game_dir[], user_dir[];
 const char *host_path(const char *guest_path, char *buf, size_t n);
 int setup_paths(int argc, char **argv);  /* finds or installs the game files; 0 when ready */
 
+/* a debugging switch from the environment, looked up once (getenv scans the whole environment,
+   and some of these are asked on every Blt or key poll) */
+#define ENV_ON(name) ({ static int env_on_ = -1; if (env_on_ < 0) env_on_ = getenv(name) != NULL; env_on_; })
+
+/* the port's own settings, DWORDs in the game's registry Settings key (gdi_misc.c) */
+int reg_setting(const char *name, int def);
+void reg_setting_set(const char *name, int val);
+
 void plat_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
 /* monotonic microseconds for the game's clock imports; sleeps briefly when a thread spins on it */

@@ -115,6 +115,10 @@ skip the static SDL2); run: `./fcop`. The executable is self-contained (only lib
   `FCOP_INPUT="9000:click@484,303 28000:Keypad_8*3000"` (scripted input, ms after start: a
   click at game coordinates, preceded by a mouse move, or an SDL key name held 100 ms or *N ms).
   That example starts the first mission from the main menu and walks forward.
+  `t:scan=N` in the script logs where guest memory holds the 16-bit value N, later scans narrow
+  that list, `t:scan=?` shows what the places hold now (found the gun's ammo counter). Then a
+  `DEBUG=1 OUT=build/fcop_dbg` build in gdb: break on plat_scan16, `watch -l *(u16*)(MEM+addr)`.
+  `FCOP_SHOT_AT=ms` dumps only frames from then on (dumping every frame slows the game to ~28 fps).
 - Static facts: `data/functions.json` plus capstone. The generated C has the original
   instruction as a comment on every line (`/* 45b7c6: jmp 0x45ba37 */`), so
   `grep "TR(0x45b7c6u)" build/recomp/gen/*.c` finds any instruction.
@@ -163,6 +167,15 @@ own test run (`plat_test.py` is headless; `--png`, `--audio`, `--input`).
   (dialog.h). `FCOP_DLG_LOG=1` logs every dialog message. The game ignores IDCANCEL in most
   dialogs, so Esc presses a "Cancel"/"Resume..." button. `build/dialogs.txt` (made by a
   throwaway decoder, not committed) lists every control.
+- Port settings in Preferences (dialog 101): dialog.c hides Processor Select and puts our own
+  controls in the gap, "Frame Rate (missions)" (37.5 original, up to 60/90/120/144/165/240,
+  Unlimited) and "Show FPS Counter". Their ids start at PORT_ID 0x7f00; every message to the
+  game's dialog procedure goes through `dlg_call`, which keeps them away from it. OK saves them
+  (registry Settings `FrameRate`: 37 = original, 0 = unlimited, else the cap; `ShowFPS`) and
+  applies them at once (u32_win.c `win_set_fps`, which also switches vsync). Preferences only
+  opens from the main menu (the pause bar has no button for it), so the rate never changes
+  mid-mission. FCOP_FPS_MAX / FCOP_FPS override the saved rate for tests. The counter is drawn
+  top-right into the shown picture only (FCOP_SHOT frames don't have it).
 - Settings live in our registry (`user_info/registry.txt`) under
   HKLM\Software\Electronic Arts\Future Cop\Settings (Resolution = list index, FullScreen,
   volumes...). The installer used to create the key; gdi_misc.c creates it now. The game saves
@@ -208,10 +221,44 @@ own test run (`plat_test.py` is headless; `--png`, `--audio`, `--input`).
 The game's clock ticks at 300 Hz (0x4130c0: QueryPerformanceCounter, us x 3 x 0.0001). The mission
 loop (0x406a7f) waits until 8 ticks have passed since the last frame (37.5 fps), then passes the real
 elapsed ticks (0x511f58, clamped to 60) to the game update (0x43b310): the game logic is time-based.
-x86c FRAME_WAIT makes that wait read `rt_frame_ticks`; core.c sets it from FCOP_FPS (default 60 ->
-5 ticks; FCOP_FPS=37 is the original). Measured 60 fps at 1280x960, also 2-player. Other 8-tick
-waits (0x4071aa, 0x407278, 0x407295, probably the network game) are unchanged. `FCOP_FPS_LOG=1`
-logs frames per second. Not yet checked by playing: anything that assumes >= 8 ticks per frame.
+x86c FRAME_WAIT makes that wait ask `rt_frame_hook` (u32_win.c `win_frame_pace`): frames start every
+n screen refreshes, the most frames per second up to FCOP_FPS_MAX, timed
+on the host clock **at the present** (`present_paced` in win_show): the frame starts as soon as a tick
+has passed and its finished picture waits for its slot. Timing the frame start instead let drawing
+time (10-16 ms, varying as the camera turns) shift presents by +-3 ms, so frames missed refreshes
+(choppy when the camera swings round). On the user's screen the game also read its clock a varying
+time after the present (frames advanced 4..7+ ticks; headless runs never showed it), and ~70 places
+read that clock (0x511ee4) directly for animations, so x86c FPS_PATCH 0x406a56 asks `rt_clock_hook`
+(`win_frame_clock`): while pacing, a frame's clock is the time it will be shown (5 and 6 ticks in turn
+at 55 fps; a late frame's lost time still counts). The Preferences "Frame Rate" (or `FCOP_FPS_MAX`,
+default 90) caps the rate: 165 Hz
+gives 82.5 fps (drawing must fit in 12.1 ms; the user found it the smoothest, steady 83 fps on the
+laptop), 144 Hz 72, 120/60 Hz 60. `FCOP_FPS_MAX=0` is unlimited: no pacing, no vsync, the real clock
+(at most 300 fps, the clock's resolution; ~95 fps headless at 1280x960). `FCOP_VSYNC=0` presents without SDL's vsync wait;
+the FPS log shows frame spacing, the longest drawing time, present blocking and ticks per frame.
+build/fps_test.sh (not committed) runs variants on the user's screen, logs in build/fps_logs/. Plain 60 fps on the user's 165 Hz laptop screen looked choppy (frames shown for 3,
+3, 3, 2 refreshes) although every frame advanced exactly 5 ticks. `FCOP_REFRESH=Hz` stands in for the
+screen (headless runs have none); `FCOP_FPS=N` uses the plain whole-tick wait (`rt_frame_ticks`)
+instead (FCOP_FPS=37 is the original). Measured 60 fps at 1280x960, also 2-player; some places cost
+13-16 ms a frame there. Not done: locking to the real vblank (SDL reports whole Hz, 165 vs 164.97, so
+the phase slips by one refresh about every 30 s). Other 8-tick waits (0x4071aa, 0x407278, 0x407295,
+probably the network game) are unchanged. `FCOP_FPS_LOG=1` logs frames per second, the shortest and
+longest time between frames and how many ticks each advanced.
+
+Checked at 37 vs 60 fps with the same input script (2026-11-07): walking, turning and the camera
+match. The machine gun did not: its weapon delay is 0, so it fired once per frame (180 rounds in 3 s
+at 60 fps instead of 113). x86c FPS_PATCH (only when rt_frame_hook is set or rt_frame_ticks < 8) makes a delay of 0 count as
+8 ticks in the fire function (0x458ed0) and keeps the sub-frame remainder in the cooldown countdown
+(0x45a2a0) instead of clamping it to 0; now 112 rounds at both rates, rockets/grenades unchanged.
+Hover mode (Ctrl+Shift with the user's bindings) turned 14% slower at 82.5 fps and about half
+speed unlimited (user noticed). Two FPS_PATCH fixes: the hover physics (0x442510) runs fixed 8-tick
+substeps but built up the turn speed (+0xc2 of the player data, clamped +-96) by the frame's ticks in
+each (0x442698: now 8); FUN_004456a0 eases heading/aim toward the target in 2-tick steps
+(0x445eb0) but capped the move at ticks*4 / ticks*2 a frame (0x445bcd, 0x445b38: now steps*8 / *4).
+Measured with `peek=4a1b9c` (player heading) every 100 ms: identical at 37.5, 82.5, unlimited;
+walking unchanged (its run-to-run spread is +-32 from input timing).
+Still frame-based but probably only cosmetic: 0x418af9 calls 0x418b50 (spawns something, smoke or
+similar) every 4th frame (frame counter 0x511f40), so 1.6x as often at 60 fps.
 
 ## Performance (measured 2026-10-19, mission at 1280x960, game capped at 37 fps)
 
@@ -226,7 +273,22 @@ The main thread went from 100% of a core to about 37%:
   went from 107 to 19.
 - What remains is the game's own per-pixel texture loop (0x45bbbe-0x45bbf0 in F_45b6db, ~30%).
   -O1, -O2 and -O3 measure the same; release builds use -O2. `perf` is blocked on this machine
-  (perf_event_paranoid 4): a SIGPROF sampler preloaded with LD_PRELOAD works instead.
+  (perf_event_paranoid 4): recomp/prof/sampler.c (LD_PRELOAD) and recomp/prof/report.py
+  (usage in its docstring) profile per function and per generated line.
+
+Profile 2026-11-07 (unlimited fps, 1280x960, ~95 fps headless): F_45b6db 36%, F_45d7e7 12%,
+F_45e86d 8%, F_45be7a 4% (all renderer), GPU driver texture upload 9%, win_show 3%. Done then:
+- x86c `fpu_copies`: runs of fild qword / fxch / fistp qword (the game's FPU memcpy and its frame
+  copy at 0x415299) become 64-bit copies through C locals, in the same order (F_415130 5.6% -> 1.3%).
+- cpu.h `rt_fist` is inline: SSE2 cvtsd2si / cvttsd2si for round-to-nearest and truncate (same
+  results, INT64_MIN included); other rounding modes call rt_fist_slow (was 2% as a call).
+- win_show converts 555/565 with shifts (the compiler vectorises them) instead of the 256 KB table:
+  0.37 vs 0.59 ms a frame in isolation, not measurable in the game. ENV_ON (host.h) caches getenv
+  for switches asked on every Blt / key poll.
+Tried and dropped: keeping the texture loop's patched immediates (rd32(0x45bbc3) etc.) in C locals
+instead of reading guest memory per pixel. Slower (95/90 vs 100-104 fps): the loop already uses
+every register, and the reads hit L1. Headless fps varies +-5 with machine load: compare builds
+by running them alternately.
 
 ## Next steps
 

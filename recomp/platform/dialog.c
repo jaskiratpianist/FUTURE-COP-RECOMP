@@ -182,6 +182,23 @@ static struct Control *find_ctrl_by_id(struct Dialog *dlg, u32 id)
 }
 
 /* CBS_DROPDOWN (style 2): a combo box with an edit field (the save-game name) */
+/* The port's own controls in the game's dialogs (Preferences: frame rate, FPS counter) have ids
+   from PORT_ID up; the game's dialog procedure never hears about them. */
+#define PORT_ID       0x7f00u
+#define ID_FRAMERATE  (PORT_ID + 1)
+#define ID_SHOWFPS    (PORT_ID + 2)
+
+/* a message to the game's dialog procedure */
+static u32 dlg_call(Cpu *c, struct Dialog *dlg, u32 msg, u32 wp, u32 lp)
+{
+    if ((msg == 0x0111 /* WM_COMMAND */ || msg == 0x0114 /* WM_HSCROLL */) && lp && (wp & 0xffffu) >= PORT_ID)
+        return 0;
+    if (msg == 0x0114 /* WM_HSCROLL */ && lp)
+        for (int i = 0; i < dlg->num_controls; i++)
+            if (dlg->controls[i].hwnd == lp && dlg->controls[i].id >= PORT_ID) return 0;
+    return guest_call(c, dlg->proc, 4, (u32[]){ dlg->hwnd, msg, wp, lp });
+}
+
 static int is_edit_combo(const struct Control *c)
 {
     return c->type == CTRL_COMBOBOX && (c->style & 3) == 2;
@@ -867,6 +884,74 @@ static void render_all_dialogs(void)
 
 /* ---- Dialog action triggers ------------------------------------------------------------ */
 
+/* Preferences (dialog 101): the port's settings go into the gap left by Processor Select (hidden
+   in imp_DialogBoxParamA): the mission frame rate and the FPS counter. Coordinates are dialog
+   units of the final layout (Controller and Audio move up 34 units). */
+static const struct { int fps; const char *name; } fps_choices[] = {
+    {37, "37.5 (original)"}, {60, "Up to 60"}, {90, "Up to 90"}, {120, "Up to 120"},
+    {144, "Up to 144"}, {165, "Up to 165"}, {240, "Up to 240"}, {0, "Unlimited"},
+};
+
+static struct Control *add_port_ctrl(struct Dialog *dlg, int type, u32 id, int x, int y, int w, int h, const char *text)
+{
+    if (dlg->num_controls >= MAX_CONTROLS) return NULL;
+    struct Control *c = &dlg->controls[dlg->num_controls++];
+    memset(c, 0, sizeof *c);
+    c->hwnd = dlg->hwnd + (u32)dlg->num_controls;
+    c->type = type;
+    c->id = id;
+    c->x = x, c->y = y, c->w = w, c->h = h;
+    c->style = type == CTRL_STATIC ? 0x50020000u : 0x50010000u;  /* WS_CHILD | WS_VISIBLE | WS_GROUP / WS_TABSTOP */
+    snprintf(c->text, sizeof c->text, "%s", text);
+    c->visible = c->enabled = 1;
+    c->cur_sel = c->hovered_item = -1;
+    return c;
+}
+
+static void prefs_add_port(struct Dialog *dlg)
+{
+    int cur = win_get_fps(), n = 0;
+    struct Control *c;
+    add_port_ctrl(dlg, CTRL_STATIC, PORT_ID, 7, 87, 115, 8, "Frame Rate (missions)");
+    if ((c = add_port_ctrl(dlg, CTRL_COMBOBOX, ID_FRAMERATE, 7, 97, 115, 100, ""))) {
+        c->style |= 3;  /* CBS_DROPDOWNLIST */
+        for (unsigned i = 0; i < sizeof fps_choices / sizeof *fps_choices; i++, n++) {
+            snprintf(c->items[n].text, sizeof c->items[n].text, "%s", fps_choices[i].name);
+            c->items[n].data = (u32)fps_choices[i].fps;
+            if (fps_choices[i].fps == cur) c->cur_sel = n;
+        }
+        if (c->cur_sel < 0) {  /* FCOP_FPS_MAX gave another rate */
+            snprintf(c->items[n].text, sizeof c->items[n].text, "Up to %d", cur);
+            c->items[n].data = (u32)cur;
+            c->cur_sel = n++;
+        }
+        c->item_count = n;
+    }
+    if ((c = add_port_ctrl(dlg, CTRL_BUTTON, ID_SHOWFPS, 7, 118, 115, 9, "Show FPS Counter"))) {
+        c->style |= BTN_AUTOCHECK;
+        c->btn_type = BTN_AUTOCHECK;
+        c->check_state = win_fps_counter;
+    }
+}
+
+/* OK in Preferences: apply and keep the port's settings */
+static void prefs_save_port(struct Dialog *dlg)
+{
+    struct Control *rate = find_ctrl_by_id(dlg, ID_FRAMERATE), *cnt = find_ctrl_by_id(dlg, ID_SHOWFPS);
+    if (rate && rate->cur_sel >= 0 && rate->cur_sel < rate->item_count) {
+        int fps = (int)rate->items[rate->cur_sel].data;
+        if (fps != win_get_fps()) {
+            win_set_fps(fps);
+            plat_log("frame rate: %s", rate->items[rate->cur_sel].text);
+        }
+        reg_setting_set("FrameRate", fps);
+    }
+    if (cnt) {
+        win_fps_counter = cnt->check_state != 0;
+        reg_setting_set("ShowFPS", win_fps_counter);
+    }
+}
+
 static void trigger_button_click(Cpu *c, struct Dialog *dlg, struct Control *ctrl)
 {
     if (!ctrl->enabled || !ctrl->visible) return;
@@ -876,6 +961,8 @@ static void trigger_button_click(Cpu *c, struct Dialog *dlg, struct Control *ctr
         dlg->result = ctrl->id;
         return;
     }
+
+    if (dlg->res_id == 101 && ctrl->id == 1001 /* OK */) prefs_save_port(dlg);
 
     if (ctrl->type == CTRL_BUTTON) {
         if (ctrl->btn_type == BTN_AUTOCHECK) {
@@ -910,7 +997,7 @@ static void trigger_button_click(Cpu *c, struct Dialog *dlg, struct Control *ctr
         if (dlg_log_enabled()) {
             plat_log("dlg 0x%x notify WM_COMMAND: id %u BN_CLICKED (ctrl 0x%x)", dlg->hwnd, ctrl->id, ctrl->hwnd);
         }
-        guest_call(c ? c : cur_cpu, dlg->proc, 4, (u32[]){ dlg->hwnd, 0x0111 /* WM_COMMAND */, wp, lp });
+        dlg_call(c ? c : cur_cpu, dlg, 0x0111 /* WM_COMMAND */, wp, lp);
     }
 }
 
@@ -924,7 +1011,7 @@ static void trigger_static_click(Cpu *c, struct Dialog *dlg, struct Control *ctr
         if (dlg_log_enabled()) {
             plat_log("dlg 0x%x notify WM_COMMAND: id %u STN_CLICKED (ctrl 0x%x)", dlg->hwnd, ctrl->id, ctrl->hwnd);
         }
-        guest_call(c ? c : cur_cpu, dlg->proc, 4, (u32[]){ dlg->hwnd, 0x0111 /* WM_COMMAND */, wp, lp });
+        dlg_call(c ? c : cur_cpu, dlg, 0x0111 /* WM_COMMAND */, wp, lp);
     }
 }
 
@@ -971,7 +1058,7 @@ static void update_slider_pos_from_mouse(struct Dialog *dlg, struct Control *c, 
     u32 code = is_drag ? 5 /* TB_THUMBTRACK */ : 8 /* TB_ENDTRACK */;
     u32 wp = (c->slider_pos << 16) | code;
     if (dlg->proc) {
-        guest_call(cur_cpu, dlg->proc, 4, (u32[]){ dlg->hwnd, 0x0114 /* WM_HSCROLL */, wp, c->hwnd });
+        dlg_call(cur_cpu, dlg, 0x0114 /* WM_HSCROLL */, wp, c->hwnd);
     }
 }
 
@@ -1032,7 +1119,7 @@ static int dlg_event_hook(const SDL_Event *e)
                             c->is_open = 0;
                             if (dlg->proc) {
                                 u32 wp = (1 /* CBN_SELCHANGE */ << 16) | (c->id & 0xFFFF);
-                                guest_call(cur_cpu, dlg->proc, 4, (u32[]){ dlg->hwnd, 0x0111, wp, c->hwnd });
+                                dlg_call(cur_cpu, dlg, 0x0111, wp, c->hwnd);
                             }
                         }
                         return 1;
@@ -1075,7 +1162,7 @@ static int dlg_event_hook(const SDL_Event *e)
                             c->cur_sel = idx;
                             u32 code = (e->button.clicks > 1) ? 2 /* LBN_DBLCLK */ : 1 /* LBN_SELCHANGE */;
                             if (dlg->proc) {
-                                guest_call(cur_cpu, dlg->proc, 4, (u32[]){ dlg->hwnd, 0x0111, (code << 16) | (c->id & 0xFFFF), c->hwnd });
+                                dlg_call(cur_cpu, dlg, 0x0111, (code << 16) | (c->id & 0xFFFF), c->hwnd);
                             }
                         }
                     } else if (c->type == CTRL_EDIT) {
@@ -1138,7 +1225,7 @@ static int dlg_event_hook(const SDL_Event *e)
                 }
                 if (dlg_log_enabled()) plat_log("dlg 0x%x notify WM_COMMAND: IDCANCEL (2)", dlg->hwnd);
                 if (dlg->proc) {
-                    guest_call(cur_cpu, dlg->proc, 4, (u32[]){ dlg->hwnd, 0x0111, 2 /* IDCANCEL */, 0 });
+                    dlg_call(cur_cpu, dlg, 0x0111, 2 /* IDCANCEL */, 0);
                     /* the game's dialogs mostly ignore IDCANCEL and only react to their own
                        buttons: then Esc presses "Cancel" (or "Resume" on the pause bar) */
                     for (int i = 0; !dlg->ended && i < dlg->num_controls; i++) {
@@ -1186,7 +1273,7 @@ static int dlg_event_hook(const SDL_Event *e)
                 }
                 if (dlg_log_enabled()) plat_log("dlg 0x%x notify WM_COMMAND: IDOK (1)", dlg->hwnd);
                 if (dlg->proc) {
-                    guest_call(cur_cpu, dlg->proc, 4, (u32[]){ dlg->hwnd, 0x0111, 1 /* IDOK */, 0 });
+                    dlg_call(cur_cpu, dlg, 0x0111, 1 /* IDOK */, 0);
                 } else {
                     dlg->ended = 1;
                     dlg->result = 1;
@@ -1206,7 +1293,7 @@ static int dlg_event_hook(const SDL_Event *e)
                         if (fc->cur_sel + 1 < fc->item_count) {
                             fc->cur_sel++;
                             u32 code = (fc->type == CTRL_COMBOBOX) ? 1 : 1;
-                            if (dlg->proc) guest_call(cur_cpu, dlg->proc, 4, (u32[]){ dlg->hwnd, 0x0111, (code << 16) | (fc->id & 0xFFFF), fc->hwnd });
+                            if (dlg->proc) dlg_call(cur_cpu, dlg, 0x0111, (code << 16) | (fc->id & 0xFFFF), fc->hwnd);
                         }
                         return 1;
                     }
@@ -1222,7 +1309,7 @@ static int dlg_event_hook(const SDL_Event *e)
                         if (fc->cur_sel > 0) {
                             fc->cur_sel--;
                             u32 code = (fc->type == CTRL_COMBOBOX) ? 1 : 1;
-                            if (dlg->proc) guest_call(cur_cpu, dlg->proc, 4, (u32[]){ dlg->hwnd, 0x0111, (code << 16) | (fc->id & 0xFFFF), fc->hwnd });
+                            if (dlg->proc) dlg_call(cur_cpu, dlg, 0x0111, (code << 16) | (fc->id & 0xFFFF), fc->hwnd);
                         }
                         return 1;
                     }
@@ -1243,15 +1330,15 @@ static int dlg_event_hook(const SDL_Event *e)
                         if (fc->slider_pos < fc->slider_min) fc->slider_pos = fc->slider_min;
                         if (fc->slider_pos > fc->slider_max) fc->slider_pos = fc->slider_max;
                         u32 wp = (fc->slider_pos << 16) | 8 /* TB_ENDTRACK */;
-                        if (dlg->proc) guest_call(cur_cpu, dlg->proc, 4, (u32[]){ dlg->hwnd, 0x0114, wp, fc->hwnd });
+                        if (dlg->proc) dlg_call(cur_cpu, dlg, 0x0114, wp, fc->hwnd);
                         return 1;
                     } else if (fc->type == CTRL_COMBOBOX) {
                         if (k == SDLK_LEFT && fc->cur_sel > 0) {
                             fc->cur_sel--;
-                            if (dlg->proc) guest_call(cur_cpu, dlg->proc, 4, (u32[]){ dlg->hwnd, 0x0111, (1 << 16) | (fc->id & 0xFFFF), fc->hwnd });
+                            if (dlg->proc) dlg_call(cur_cpu, dlg, 0x0111, (1 << 16) | (fc->id & 0xFFFF), fc->hwnd);
                         } else if (k == SDLK_RIGHT && fc->cur_sel + 1 < fc->item_count) {
                             fc->cur_sel++;
-                            if (dlg->proc) guest_call(cur_cpu, dlg->proc, 4, (u32[]){ dlg->hwnd, 0x0111, (1 << 16) | (fc->id & 0xFFFF), fc->hwnd });
+                            if (dlg->proc) dlg_call(cur_cpu, dlg, 0x0111, (1 << 16) | (fc->id & 0xFFFF), fc->hwnd);
                         }
                         return 1;
                     } else if (fc->type == CTRL_BUTTON && dlg->is_msgbox) {
@@ -1280,7 +1367,7 @@ static int dlg_event_hook(const SDL_Event *e)
                         if (fc->cursor_pos > 0 && len > 0) {
                             memmove(&fc->text[fc->cursor_pos - 1], &fc->text[fc->cursor_pos], len - fc->cursor_pos + 1);
                             fc->cursor_pos--;
-                            if (dlg->proc) guest_call(cur_cpu, dlg->proc, 4, (u32[]){ dlg->hwnd, 0x0111, ((fc->type == CTRL_EDIT ? 0x300u /* EN_CHANGE */ : 5u /* CBN_EDITCHANGE */) << 16) | (fc->id & 0xFFFF), fc->hwnd });
+                            if (dlg->proc) dlg_call(cur_cpu, dlg, 0x0111, ((fc->type == CTRL_EDIT ? 0x300u /* EN_CHANGE */ : 5u /* CBN_EDITCHANGE */) << 16) | (fc->id & 0xFFFF), fc->hwnd);
                         }
                     }
                 }
@@ -1301,7 +1388,7 @@ static int dlg_event_hook(const SDL_Event *e)
                         memmove(&fc->text[fc->cursor_pos + ins_len], &fc->text[fc->cursor_pos], len - fc->cursor_pos + 1);
                         memcpy(&fc->text[fc->cursor_pos], e->text.text, ins_len);
                         fc->cursor_pos += ins_len;
-                        if (dlg->proc) guest_call(cur_cpu, dlg->proc, 4, (u32[]){ dlg->hwnd, 0x0111, ((fc->type == CTRL_EDIT ? 0x300u /* EN_CHANGE */ : 5u /* CBN_EDITCHANGE */) << 16) | (fc->id & 0xFFFF), fc->hwnd });
+                        if (dlg->proc) dlg_call(cur_cpu, dlg, 0x0111, ((fc->type == CTRL_EDIT ? 0x300u /* EN_CHANGE */ : 5u /* CBN_EDITCHANGE */) << 16) | (fc->id & 0xFFFF), fc->hwnd);
                     }
                 }
             }
@@ -2166,6 +2253,7 @@ static u32 imp_DialogBoxParamA(Cpu *c)
         return 1;
     }
 
+    if (dlg->res_id == 101) prefs_add_port(dlg);
     layout_dialog(dlg);
 
     dlg->focused_ctrl = -1;
@@ -2181,7 +2269,7 @@ static u32 imp_DialogBoxParamA(Cpu *c)
         if (dlg_log_enabled()) {
             plat_log("dlg 0x%x call WM_INITDIALOG (first_ctrl 0x%x, param 0x%x)", dlg->hwnd, first_ctrl_hwnd, param);
         }
-        guest_call(c, dlg->proc, 4, (u32[]){ dlg->hwnd, 0x0110 /* WM_INITDIALOG */, first_ctrl_hwnd, param });
+        dlg_call(c, dlg, 0x0110 /* WM_INITDIALOG */, first_ctrl_hwnd, param);
     }
     /* Preferences (dialog 101): "Processor Select" only picks 1998 CPU-specific renderer loops,
        meaningless for recompiled code: hide it and keep it on AutoDetect (item 0) */

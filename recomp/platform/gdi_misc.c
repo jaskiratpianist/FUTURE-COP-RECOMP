@@ -538,6 +538,30 @@ static void reg_read_file_locked(void)
     fclose(f);
 }
 
+/* the port's own settings (Preferences: frame rate, FPS counter): DWORDs next to the game's in
+   HKLM\Software\Electronic Arts\Future Cop\Settings (host.h) */
+static const char reg_settings_key[] = "HKEY_LOCAL_MACHINE\\Software\\Electronic Arts\\Future Cop\\Settings";
+
+int reg_setting(const char *name, int def)
+{
+    pthread_mutex_lock(&reg_mutex);
+    reg_load_locked();
+    RegValue *v = reg_find_value_locked(reg_settings_key, name);
+    int r = v && v->data_len >= 4 ? (int)(v->data[0] | v->data[1] << 8 | v->data[2] << 16 | (u32)v->data[3] << 24) : def;
+    pthread_mutex_unlock(&reg_mutex);
+    return r;
+}
+
+void reg_setting_set(const char *name, int val)
+{
+    u8 d[4] = {(u8)val, (u8)(val >> 8), (u8)(val >> 16), (u8)((u32)val >> 24)};
+    pthread_mutex_lock(&reg_mutex);
+    reg_load_locked();
+    reg_set_value_locked(reg_get_or_create_key_locked(reg_settings_key), name, 4 /* REG_DWORD */, d, 4);
+    reg_save_locked();
+    pthread_mutex_unlock(&reg_mutex);
+}
+
 /* LONG RegOpenKeyExA(HKEY hKey, LPCSTR lpSubKey, DWORD ulOptions, REGSAM samDesired, PHKEY phkResult) */
 static u32 imp_RegOpenKeyExA(Cpu *c)
 {

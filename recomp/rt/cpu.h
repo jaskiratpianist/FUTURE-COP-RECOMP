@@ -30,6 +30,11 @@ typedef struct Cpu {
 
 extern u8 *MEM;
 extern u32 rt_frame_ticks;  /* the mission loop's frame time in 1/300 s (x86c FRAME_WAIT) */
+/* when set, decides instead when the mission loop starts a frame: given the ticks passed
+   since the last one, it returns 0 to start now or 0x7fffffff to keep waiting */
+extern u32 (*rt_frame_hook)(u32 ticks);
+/* when set, replaces the game clock the mission loop reads for a frame (x86c FPS_PATCH 0x406a56) */
+extern u32 (*rt_clock_hook)(u32 clock);
 
 static inline u8  rd8(u32 a)  { return MEM[a]; }
 static inline u16 rd16(u32 a) { u16 v; memcpy(&v, MEM + a, 2); return v; }
@@ -76,6 +81,9 @@ void rt_trace(u32 a, u32 eax, u32 ecx, u32 edx, u32 ebx, u32 esp, u32 ebp, u32 e
                      c->st[_a] = c->st[_b]; c->sti[_a] = c->sti[_b]; c->stx[_a] = c->stx[_b]; \
                      c->st[_b] = _v; c->sti[_b] = _x; c->stx[_b] = _t; } while (0)
 #define FIST64(x) (c->stx[STK(0)] ? c->sti[STK(0)] : rt_fist(c, (x)))
+#if defined(__x86_64__) || (defined(__SSE2__) && defined(__i386__))
+#include <emmintrin.h>
+#endif
 #define FPOP() (c->top = (c->top + 1) & 7)
 
 /* A jump from one recompiled function into another is a tail call; it must not grow the host
@@ -95,7 +103,7 @@ void rt_unimpl(Cpu *c, u32 addr, const char *what);
 void rt_trap(Cpu *c, u32 addr, const char *why);
 void rt_fcom(Cpu *c, double a, double b);        /* sets C0/C2/C3 */
 void rt_fxam(Cpu *c);
-s64  rt_fist(Cpu *c, double x);                  /* round per the control word */
+s64  rt_fist_slow(Cpu *c, double x);             /* round per the control word (rt_fist) */
 double rt_frnd(Cpu *c, double x);
 double rt_ld80(u32 a);
 void rt_st80(u32 a, double x);
@@ -103,6 +111,19 @@ void rt_cpuid(Cpu *c);
 void rt_rdtsc(Cpu *c);
 u32  rt_in(Cpu *c, u32 port, int size);
 void rt_out(Cpu *c, u32 port, u32 v, int size);
+
+/* fist/fistp: round per the control word; out of range or NaN gives the "integer indefinite"
+   INT64_MIN (narrower stores clamp it). The CRT's ftol truncates and the rest of the game rounds
+   to nearest: SSE2's cvtsd2si (MXCSR keeps its default round-to-nearest) and cvttsd2si do exactly
+   that, including INT64_MIN, in one instruction instead of a call. */
+static inline s64 rt_fist(Cpu *c, double x)
+{
+#if defined(__x86_64__)
+    if (!(c->cw & 0xc00)) return _mm_cvtsd_si64(_mm_set_sd(x));
+    if ((c->cw & 0xc00) == 0xc00) return _mm_cvttsd_si64(_mm_set_sd(x));
+#endif
+    return rt_fist_slow(c, x);
+}
 
 /* Guest threads take turns, as on the single-core PCs the game was written for (it has
    races that only show up when its threads really run in parallel). rt_poll is set while

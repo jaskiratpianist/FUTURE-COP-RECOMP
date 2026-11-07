@@ -210,6 +210,31 @@ class Gen:
     # real elapsed ticks to the game update, so a shorter wait runs it faster at the same speed
     FRAME_WAIT = (0x406a7f,)  # cmp eax, 8
 
+    # Faster frames (rt_frame_hook set, or rt_frame_ticks < 8) need two fixes to the player's weapon cooldowns:
+    # FUN_00458ed0 fires when a weapon's cooldown is <= 0 and adds the weapon's delay, which is 0
+    # for the machine gun (one shot per frame: 1.6x the ammo and damage at 60 fps), so a delay of
+    # 0 counts as 8 ticks (one original frame); FUN_0045a2a0 counts the cooldowns down by each
+    # frame's ticks and clamps at 0, which would round 8 ticks up to 2 frames of 5, so the
+    # remainder (always less than one frame) is kept instead
+    FPS_PATCH = {
+        0x45902d: ("add ebx, edx", "if (!edx && (rt_frame_hook || rt_frame_ticks < 8u)) edx = 8u; {code}"),
+        0x45a2c5: ("mov dword ptr [eax], 0", "if (rt_frame_hook || rt_frame_ticks < 8u) wr32((u32)(eax), ecx); else {{ {code} }}"),
+        # hover mode (FUN_00442510) runs its physics in fixed 8-tick substeps but builds up the turn
+        # speed by the whole frame's ticks in each substep: at 2-4 ticks a frame it turned 2-4x
+        # slower. Each substep is 8 ticks, so the turn speed grows by 8 in each.
+        0x442698: ("mov edx, dword ptr [ebp + 0xc]", "if (rt_frame_hook || rt_frame_ticks < 8u) edx = 8u; else {{ {code} }}"),
+        # FUN_004456a0 eases the player's heading and aim toward their targets in steps of 2 ticks
+        # (FUN_00445eb0, n = (ticks + carry) / 2 steps a frame) but limits the move to ticks*4
+        # (heading) and ticks*2 (aim) a frame: at 1 tick a frame, every other frame has no step and
+        # the next may only move 4, so hover mode turned at half speed. The limit counts the
+        # steps instead (8 and 4 per step: the same over time)
+        0x445b38: ("mov eax, dword ptr [esp + 0x60]", "if (rt_frame_hook || rt_frame_ticks < 8u) eax = rd32(esp + 0x64u) * 2u; else {{ {code} }}"),
+        0x445bcd: ("mov eax, dword ptr [esp + 0x54]", "if (rt_frame_hook || rt_frame_ticks < 8u) eax = rd32(esp + 0x58u) * 2u; else {{ {code} }}"),
+        # the game clock a mission frame runs on (ticks since the last frame, and ~70 animations read
+        # it): u32_win.c win_frame_clock makes it the time the frame will be shown
+        0x406a56: ("mov dword ptr [0x511ee4], eax", "if (rt_clock_hook) eax = rt_clock_hook(eax); {code}"),
+    }
+
     PATCH_TABLE = 0x48ea20  # FUN_0045b1c0 rewrites code for the 555/565 pixel formats from this table
 
     def self_modifying(self):
@@ -757,6 +782,70 @@ class Gen:
         fn.dyn = True
         return f"{{ dyn_t = {t}; goto dyn; }}"
 
+    def fpu_copies(self, fn, addrs, body, used):
+        """The game copies memory 8 bytes at a time through the FPU (fild qword / fxch /
+        fistp qword: its memcpy and the frame copy at 0x415299). Through the emulated x87
+        stack that costs a conversion and three stores per value; a run of only these
+        instructions that leaves the stack as it found it becomes 64-bit loads into locals
+        and stores from them, each at its own instruction, in the same order (fild then fistp
+        of a qword is exact). Returns how many locals (q0, q1...) the function needs."""
+        def kind(i):
+            if i.address in self.variants or i.address in self.dyn_disp:
+                return None
+            b = bytes(i.bytes)
+            if b[0] == 0xDF and b[1] < 0xC0 and (b[1] >> 3) & 7 in (5, 7):
+                return "ld" if (b[1] >> 3) & 7 == 5 else "st"
+            if b[0] == 0xD9 and 0xC8 <= b[1] <= 0xCF:
+                return "xch"
+            return None
+        lines = {}
+        for n, (a, l) in enumerate(body):
+            if l is not None:
+                lines.setdefault(a, n)  # the instruction's own line, not its "falls through" goto
+        nq, k = 0, 0
+        while k < len(addrs):
+            run, a = [], addrs[k]
+            while k < len(addrs) and kind(fn.ins[addrs[k]]) and (not run or (
+                    addrs[k] == run[-1].address + run[-1].size and f"{addrs[k]:x}" not in used)):
+                run.append(fn.ins[addrs[k]])
+                k += 1
+            if not run:
+                k += 1
+                continue
+            # symbolic stack: q<n> pushed in the run, or ("pre", depth) for what was there before
+            st, code, best, free = [], [], 0, []
+            nxt = 0
+            for n, i in enumerate(run):
+                kd = kind(i)
+                if kd == "ld":
+                    q = free.pop() if free else nxt
+                    nxt = max(nxt, q + 1)
+                    st.insert(0, q)
+                    code.append(f"q{q} = rd64({self.addr(i, i.operands[0])});")
+                elif kd == "xch":
+                    r = i.bytes[1] - 0xC8
+                    if r >= len(st):
+                        break
+                    st[0], st[r] = st[r], st[0]
+                    code.append("")
+                else:
+                    if not st:
+                        break
+                    q = st.pop(0)
+                    free.append(q)
+                    code.append(f"wr64({self.addr(i, i.operands[0])}, q{q});")
+                if not st:
+                    best = n + 1
+            if best >= 2:
+                for i, cd in zip(run[:best], code[:best]):
+                    n = lines[i.address]
+                    a = i.address
+                    body[n] = (a, f"    TR(0x{a:x}u); {cd} /* {a:x}: {i.mnemonic} {i.op_str} (FPU copy) */")
+                nq = max(nq, nxt)
+            if best < len(run):  # look again after the part used (or after the first instruction)
+                k = addrs.index(run[max(best, 1)].address) if max(best, 1) < len(run) else k
+        return nq
+
     def function(self, fn):
         body = []
         addrs = sorted(fn.ins)
@@ -771,7 +860,11 @@ class Gen:
                             f"else {{ {code} }}")
                 if a in self.FRAME_WAIT:
                     assert "((u32)0x8u)" in code, hex(a)
-                    code = code.replace("((u32)0x8u)", "rt_frame_ticks")
+                    code = code.replace("((u32)0x8u)", "(rt_frame_hook ? rt_frame_hook(eax) : rt_frame_ticks)")
+                if a in self.FPS_PATCH:
+                    want, tmpl = self.FPS_PATCH[a]
+                    assert f"{i.mnemonic} {i.op_str}" == want, hex(a)
+                    code = tmpl.format(code=code)
             except Unsupported as e:
                 self.unsupported[str(e)] = self.unsupported.get(str(e), 0) + 1
                 code = f"SYNC; rt_unimpl(c, 0x{a:x}u, \"{i.mnemonic} {i.op_str}\"); return;"
@@ -784,7 +877,10 @@ class Gen:
         used = set(re.findall(r"goto L_([0-9a-f]+);", "\n".join(l for _, l in body if l)))
         if getattr(fn, "dyn", False):
             used.update(f"{a:x}" for a in fn.ins)
+        nq = self.fpu_copies(fn, addrs, body, used)
         out = [f"void F_{fn.entry:x}(Cpu *c) /* {fn.name} */", "{", "    REGS;", "    LOAD;"]
+        if nq:
+            out.insert(3, "    u64 " + ", ".join(f"q{k}" for k in range(nq)) + ";")
         if not fn.ins:
             out.append(f"    SYNC; rt_trap(c, 0x{fn.entry:x}u, \"no code\");")
         elif fn.entry != min(fn.ins):

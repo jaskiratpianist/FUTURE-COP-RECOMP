@@ -4,6 +4,8 @@
 #define _GNU_SOURCE
 #include <ctype.h>
 #include <pthread.h>
+#include <sched.h>
+#include <time.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -258,7 +260,7 @@ static void ensure_window_sdl(struct WinInternal *w)
 /* Message Queue Functions */
 void msg_post(u32 hwnd, u32 message, u32 wparam, u32 lparam)
 {
-    if (getenv("FCOP_TRACE_MSG")) plat_log("msg_post hwnd %x msg %x wp %x lp %x", hwnd, message, wparam, lparam);
+    if (ENV_ON("FCOP_TRACE_MSG")) plat_log("msg_post hwnd %x msg %x wp %x lp %x", hwnd, message, wparam, lparam);
     pthread_mutex_lock(&msg_lock);
     int next_tail = (msg_tail + 1) % MSG_QUEUE_CAP;
     if (next_tail == msg_head) {
@@ -782,13 +784,17 @@ enum EvKind {
     EV_KEY = 0,
     EV_MOUSE,
     EV_PAD_BTN,
-    EV_PAD_AXIS
+    EV_PAD_AXIS,
+    EV_SCAN
 };
+void plat_scan16(u32 v);  /* core.c */
 
 /* FCOP_INPUT="5000:Down 6000:Return*500 9000:click@320,240": scripted input for headless tests.
    Each item is milliseconds since the first pump, then an SDL key name (held for 100 ms, or
    for *N ms; "_" stands for a space, as in Keypad_8) or a left click at game coordinates,
-   or a virtual pad button (pad_a*500, pad_up*1000) or axis (pad_lx=-32768*1000). */
+   or a virtual pad button (pad_a*500, pad_up*1000) or axis (pad_lx=-32768*1000), or scan=N
+   (log where guest memory holds the 16-bit value N, narrowing on each later scan), or peek=ADDR
+   (log the 32-bit value at hex guest address ADDR). */
 static void scripted_input(void)
 {
     static const char *script;
@@ -825,6 +831,10 @@ static void scripted_input(void)
                 ev[n].t = t >= 200 ? t - 200 : 0; ev[n].kind = EV_MOUSE; ev[n].down = 2; ev[n].x = x; ev[n].y = y; ev[n].k = 0; n++;
                 ev[n] = ev[n - 1]; ev[n].t = t; ev[n].down = 1; n++;
                 ev[n] = ev[n - 1]; ev[n].t = t + 100; ev[n].down = 0; n++;
+            } else if (!strncmp(buf, "peek=", 5)) {
+                ev[n].t = t; ev[n].kind = EV_SCAN; ev[n].pad_val = -2; ev[n].x = (int)strtoul(buf + 5, NULL, 16); ev[n].k = 0; n++;
+            } else if (!strncmp(buf, "scan=", 5)) {
+                ev[n].t = t; ev[n].kind = EV_SCAN; ev[n].pad_val = buf[5] == '?' ? -1 : atoi(buf + 5); ev[n].k = 0; n++;
             } else if (!strncmp(buf, "pad_", 4)) {
                 char *star = strchr(buf, '*');
                 unsigned hold = star ? (unsigned)atoi(star + 1) : 100;
@@ -869,6 +879,16 @@ static void scripted_input(void)
     }
     now = SDL_GetTicks() - t0;
     while (next < n && ev[next].t <= now) {
+        if (ev[next].kind == EV_SCAN && ev[next].pad_val == -2) {
+            plat_log("peek 0x%x: %d at %u ms", (u32)ev[next].x, (s32)rd32((u32)ev[next].x), now);
+            next++;
+            continue;
+        }
+        if (ev[next].kind == EV_SCAN) {
+            plat_scan16((u32)ev[next].pad_val);
+            next++;
+            continue;
+        }
         if (ev[next].kind == EV_PAD_BTN) {
             if (fcop_virtual_joy) {
                 SDL_JoystickSetVirtualButton(fcop_virtual_joy, ev[next].pad_index, (Uint8)ev[next].pad_val);
@@ -952,14 +972,20 @@ void plat_pump(void)
 /* FCOP_SHOT=path: write each presented 16-bit frame there as a PPM (for headless checks) */
 static void shot(const void *pixels, int w, int h, int pitch, int bits, u32 gmask)
 {
-    static int n;
-    const char *path = getenv("FCOP_SHOT");
+    static int n, at = -1;
+    static const char *path;
+    if (at < 0) {
+        const char *e = getenv("FCOP_SHOT_AT");
+        path = getenv("FCOP_SHOT");
+        at = e ? atoi(e) : 0;
+    }
     FILE *f;
     int x, y;
     n++;
     char name[512];
-    if (getenv("FCOP_SHOT_LOG")) plat_log("frame %d presented (%dx%d)", n, w, h);
+    if (ENV_ON("FCOP_SHOT_LOG")) plat_log("frame %d presented (%dx%d)", n, w, h);
     if (!path || bits != 16) return;
+    if (SDL_GetTicks() < (u32)at) return;  /* FCOP_SHOT_AT=ms: only frames from then on (writing every frame slows the game down) */
     snprintf(name, sizeof name, path, n);  /* path may contain %d for the frame number */
     if (!(f = fopen(name, "wb"))) return;
     fprintf(f, "P6\n%d %d\n255\n", w, h);
@@ -1033,8 +1059,26 @@ void win_present(const void *pixels, int w, int h, int pitch_bytes, int bits, u3
     win_show(pixels, w, h, pitch_bytes, bits, rmask, gmask, bmask);
 }
 
-/* 16-bit frames are turned into 32-bit ones through a table, here: renderers do not take
-   555/565 textures, and SDL's own conversion took a fifth of the game's CPU time */
+/* 16-bit frames are turned into 32-bit ones here: renderers do not take 555/565 textures, and
+   SDL's own conversion took a fifth of the game's CPU time. The game's two layouts use shifts
+   (the compiler does several pixels at once; 0.37 vs 0.59 ms a 1280x960 frame for the 256 KB
+   table, same results), anything else the table. */
+static void px_row_555(u32 *restrict d, const u16 *restrict s, int n)
+{
+    for (int x = 0; x < n; x++) {
+        u32 p = s[x], r = p >> 10 & 31, g = p >> 5 & 31, b = p & 31;
+        d[x] = 0xff000000u | (r << 3 | r >> 2) << 16 | (g << 3 | g >> 2) << 8 | (b << 3 | b >> 2);
+    }
+}
+
+static void px_row_565(u32 *restrict d, const u16 *restrict s, int n)
+{
+    for (int x = 0; x < n; x++) {
+        u32 p = s[x], r = p >> 11 & 31, g = p >> 5 & 63, b = p & 31;
+        d[x] = 0xff000000u | (r << 3 | r >> 2) << 16 | (g << 2 | g >> 4) << 8 | (b << 3 | b >> 2);
+    }
+}
+
 static u32 px_table[65536], px_table_masks[3];
 
 static u32 px_channel(u32 p, u32 mask)
@@ -1058,18 +1102,43 @@ static void px_table_for(u32 rmask, u32 gmask, u32 bmask)
     px_table_masks[2] = bmask;
 }
 
+static void present_paced(void);
+static int fps_max(void);
+static int vsync_wanted(void);
+static u64 pace_now(void);
+static void fps_counter_draw(u32 *dst, int pitch, int w, int h);
+static u64 present_us;  /* how long the last SDL_RenderPresent took (FCOP_FPS_LOG) */
+static u64 pace_work_us;
+
 void win_show(const void *pixels, int w, int h, int pitch_bytes, int bits, u32 rmask, u32 gmask, u32 bmask)
 {
+    present_paced();
     shot(pixels, w, h, pitch_bytes, bits, gmask);
-    {   /* FCOP_FPS_LOG=1: frames shown in each second */
-        static int on = -1, frames;
+    {   /* FCOP_FPS_LOG=1: frames shown in each second, how many game ticks (1/300 s) the frames
+           advanced (0x511f58) and the shortest and longest time between two of them */
+        static int on = -1, frames, ticks[8];
         static u32 since;
+        static u64 prev, lo = ~0ull, hi, plo = ~0ull, phi, whi;
         if (on < 0) on = getenv("FCOP_FPS_LOG") != NULL;
         if (on) {
             u32 now = SDL_GetTicks();
+            u64 us = SDL_GetPerformanceCounter() * 1000000ull / SDL_GetPerformanceFrequency();
+            u32 t = rd32(0x511f58);
+            if (prev) { if (us - prev < lo) lo = us - prev; if (us - prev > hi) hi = us - prev; }
+            prev = us;
+            ticks[t < 7 ? t : 7]++;
+            if (present_us < plo) plo = present_us;
+            if (present_us > phi) phi = present_us;
+            if (pace_work_us > whi && pace_work_us < 1000000u) whi = pace_work_us;
             if (!since) since = now;
             frames++;
-            if (now - since >= 1000) { plat_log("fps %d (%dx%d)", frames, w, h); frames = 0; since = now; }
+            if (now - since >= 1000) {
+                plat_log("fps %d (%dx%d), frame %.1f-%.1f ms, drawing up to %.1f ms, present %.1f-%.1f ms, ticks 1:%d 2:%d 3:%d 4:%d 5:%d 6:%d 7+:%d",
+                         frames, w, h, lo / 1000.0, hi / 1000.0, whi / 1000.0, plo / 1000.0, phi / 1000.0,
+                         ticks[1], ticks[2], ticks[3], ticks[4], ticks[5], ticks[6], ticks[7]);
+                frames = 0; since = now; lo = ~0ull; hi = 0; plo = ~0ull; phi = 0; whi = 0;
+                memset(ticks, 0, sizeof ticks);
+            }
         }
     }
     if (!main_win) return;
@@ -1105,7 +1174,8 @@ void win_show(const void *pixels, int w, int h, int pitch_bytes, int bits, u32 r
     /* Determine SDL pixel format */
     Uint32 format = SDL_PIXELFORMAT_ARGB8888;
     if (bits == 16) {
-        px_table_for(rmask, gmask, bmask);
+        if (bmask != 0x1f || !((rmask == 0x7c00 && gmask == 0x3e0) || (rmask == 0xf800 && gmask == 0x7e0)))
+            px_table_for(rmask, gmask, bmask);
     } else if (bits == 32) {
         if (rmask == 0x00ff0000) format = SDL_PIXELFORMAT_ARGB8888;
         else if (rmask == 0x000000ff) format = SDL_PIXELFORMAT_ABGR8888;
@@ -1115,7 +1185,9 @@ void win_show(const void *pixels, int w, int h, int pitch_bytes, int bits, u32 r
     }
 
     if (!win_int->renderer) {
-        win_int->renderer = SDL_CreateRenderer(win_int->win.sdl, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+        /* FCOP_VSYNC=0 or unlimited frames: present without waiting for the refresh */
+        win_int->renderer = SDL_CreateRenderer(win_int->win.sdl, -1,
+                                               SDL_RENDERER_ACCELERATED | (vsync_wanted() ? SDL_RENDERER_PRESENTVSYNC : 0));
         if (!win_int->renderer) {
             win_int->renderer = SDL_CreateRenderer(win_int->win.sdl, -1, 0);
         }
@@ -1139,19 +1211,184 @@ void win_show(const void *pixels, int w, int h, int pitch_bytes, int bits, u32 r
     if (bits == 16) {
         void *tp;
         int tpitch;
+        int fmt = bmask != 0x1f ? 0 : rmask == 0x7c00 && gmask == 0x3e0 ? 555 : rmask == 0xf800 && gmask == 0x7e0 ? 565 : 0;
         if (SDL_LockTexture(win_int->texture, NULL, &tp, &tpitch)) return;
         for (int y = 0; y < h; y++) {
             const u16 *src = (const u16 *)((const u8 *)pixels + (size_t)y * pitch_bytes);
             u32 *dst = (u32 *)((u8 *)tp + (size_t)y * tpitch);
-            for (int x = 0; x < w; x++) dst[x] = px_table[src[x]];
+            if (fmt == 555) px_row_555(dst, src, w);
+            else if (fmt == 565) px_row_565(dst, src, w);
+            else for (int x = 0; x < w; x++) dst[x] = px_table[src[x]];
         }
+        fps_counter_draw(tp, tpitch, w, h);
         SDL_UnlockTexture(win_int->texture);
     } else {
         SDL_UpdateTexture(win_int->texture, NULL, pixels, pitch_bytes);
     }
     SDL_RenderClear(win_int->renderer);
     SDL_RenderCopy(win_int->renderer, win_int->texture, NULL, NULL);
-    SDL_RenderPresent(win_int->renderer);
+    {
+        u64 t0 = pace_now();
+        SDL_RenderPresent(win_int->renderer);
+        present_us = pace_now() - t0;
+    }
+}
+
+/* Mission frame pacing. The game moves everything by the ticks (1/300 s) that passed, so any
+   frame rate plays at the same speed, but a frame should stay on screen for the same number of
+   refreshes each time: 60 fps on a 165 Hz screen shows frames for 3, 3, 3, then 2 refreshes,
+   which looks choppy. Missions present a frame every n refreshes instead (165 Hz: n = 3, 55 fps;
+   120 Hz: 60 fps). The wait is before the present, not before the frame starts: drawing takes
+   10-16 ms at 1280x960 and varies as the camera turns, so frames timed at their start reached
+   the screen up to 3 ms early or late and missed refreshes. FCOP_REFRESH=Hz overrides the
+   screen's rate (headless tests have none); FCOP_FPS bypasses all this (core.c). */
+static u64 pace_period, pace_next, pace_mission_us;
+static s32 pace_clock_ofs;  /* game clock minus host clock in ticks, while pacing */
+static int pace_unlimited;  /* FCOP_FPS_MAX=0: no pacing (frames start once a tick has passed) */
+
+/* the most frames per second in missions (win_set_fps): default 90, 0 = unlimited, 37 = original */
+static int fps_setting = 90;
+static int fps_max(void) { return fps_setting; }
+static u64 frame_clock_us;  /* when the last mission frame read the clock (FPS counter) */
+int win_fps_counter;
+
+static int vsync_wanted(void)
+{
+    const char *vs = getenv("FCOP_VSYNC");
+    return !(vs && *vs == '0') && fps_setting != 0;
+}
+
+/* Preferences "Frame Rate" or FCOP_FPS_MAX (core.c). 37 is the original game: the plain 8-tick
+   wait and the real clock, with every FPS_PATCH off (they test rt_frame_hook). Otherwise frames are
+   paced by win_frame_pace / present_paced, recomputed at the next mission frame. */
+void win_set_fps(int max)
+{
+    if (max < 0) max = 90;
+    fps_setting = max;
+    pace_period = pace_next = 0;
+    pace_clock_ofs = 0;
+    pace_unlimited = 0;
+    rt_frame_ticks = 8;
+    rt_frame_hook = max == 37 ? NULL : win_frame_pace;
+    rt_clock_hook = win_frame_clock;  /* hands the clock through while not pacing */
+    if (main_win && ((struct WinInternal *)main_win)->renderer)
+        SDL_RenderSetVSync(((struct WinInternal *)main_win)->renderer, vsync_wanted());
+}
+
+int win_get_fps(void) { return fps_setting; }
+static u64 pace_start, pace_work_us;  /* when the last mission frame started; how long it took to draw (FCOP_FPS_LOG) */
+
+static u64 pace_now(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (u64)ts.tv_sec * 1000000ull + (u64)ts.tv_nsec / 1000u;
+}
+
+/* rt_frame_hook: the mission loop asks whether to start a frame; it may as soon as a tick has
+   passed, since present_paced holds each frame back until its turn */
+u32 win_frame_pace(u32 ticks)
+{
+    if (!pace_period) {
+        const char *e = getenv("FCOP_REFRESH");
+        int hz = e ? atoi(e) : 0, n;
+        if (hz <= 0) {
+            SDL_DisplayMode dm;
+            int d = 0;
+            if (main_win && ((struct WinInternal *)main_win)->win.sdl)
+                d = SDL_GetWindowDisplayIndex(((struct WinInternal *)main_win)->win.sdl);
+            if (SDL_GetCurrentDisplayMode(d < 0 ? 0 : d, &dm) == 0) hz = dm.refresh_rate;
+        }
+        if (hz <= 0) hz = 60;
+        {   /* FCOP_FPS_MAX: the most frames per second (default 90: 165 Hz gives 82.5, 144 Hz 72,
+               120 Hz and 60 Hz give 60); 0 is unlimited */
+            int max = fps_max();
+            if (!max) {
+                pace_period = 1;
+                pace_unlimited = 1;
+                plat_log("missions unlimited: as many frames as the game can draw, no vsync");
+            } else {
+                n = (hz + max - 1) / max;
+                pace_period = (u64)n * 1000000u / (u64)hz;
+                plat_log("missions paced to %d Hz / %d = %.1f fps", hz, n, (double)hz / n);
+            }
+        }
+    }
+    pace_mission_us = pace_now();
+    if (ticks < 1) return 0x7fffffffu;
+    pace_start = pace_mission_us;
+    return 0;
+}
+
+/* rt_clock_hook. The game reads its clock (ticks of 1/300 s) at the start of each frame, a varying
+   time after the last present: on the user's screen frames advanced 4, 5, 6, 7 ticks although they
+   were presented exactly 18.2 ms apart, and animations that read the clock directly stepped just as
+   unevenly. While missions are paced, a frame's clock is the time it will be shown instead (its
+   slot, pace_next), so frames advance 5 and 6 ticks in turn at 55 fps, never 4 or 7. */
+u32 win_frame_clock(u32 clock)
+{
+    u32 slot;
+    frame_clock_us = pace_now();
+    if (!pace_next || pace_now() - pace_mission_us > 100000u) return clock;  /* not pacing yet */
+    slot = (u32)(pace_next * 3u / 10000u);
+    if (!pace_clock_ofs) pace_clock_ofs = (s32)(clock - (u32)(pace_now() * 3u / 10000u)) | 1;
+    return slot + (u32)pace_clock_ofs;
+}
+
+/* before a mission frame is presented: wait for its slot, one period after the last one */
+static void present_paced(void)
+{
+    u64 now = pace_now();
+    pace_work_us = pace_start ? now - pace_start : 0;
+    if (!pace_period || pace_unlimited || now - pace_mission_us > 100000u) { pace_next = 0; pace_clock_ofs = 0; return; }  /* menus */
+    if (pace_next && now < pace_next) {
+        while (pace_now() + 1200u < pace_next) {
+            struct timespec req = {0, 1000000};
+            nanosleep(&req, NULL);
+        }
+        while ((now = pace_now()) < pace_next) sched_yield();  /* the last bit exactly */
+    }
+    /* a frame that missed its slot starts a new count instead of rushing the next ones */
+    pace_next = (!pace_next || now > pace_next + pace_period / 2) ? now + pace_period : pace_next + pace_period;
+}
+
+/* Preferences "Show FPS Counter": mission frames shown per second (counted over half a second),
+   drawn into the top-right corner (the radar is top-left) of the presented picture, so screenshots (FCOP_SHOT) and the
+   game's own frame never contain it */
+extern char font8x8_basic[128][8];  /* dialog.c includes the font */
+
+static void fps_counter_draw(u32 *dst, int pitch, int w, int h)
+{
+    static u64 since;
+    static int frames, shown;
+    u64 now = pace_now();
+    char txt[16];
+    int s, bw, bh, x0;
+    if (!win_fps_counter || now - frame_clock_us > 100000u) { since = 0; return; }  /* menus */
+    frames++;
+    if (!since) since = now, frames = 0, shown = 0;
+    else if (now - since >= 500000u) {
+        shown = (int)((frames * 1000000ull + (now - since) / 2) / (now - since));
+        since = now;
+        frames = 0;
+    }
+    if (shown) snprintf(txt, sizeof txt, "%d FPS", shown); else snprintf(txt, sizeof txt, "-- FPS");
+    s = h >= 960 ? 3 : h >= 600 ? 2 : 1;  /* 8x8 font scaled to the resolution */
+    bw = ((int)strlen(txt) * 8 + 4) * s;
+    bh = 12 * s;
+    if (bw + 4 * s > w || bh + 4 * s > h) return;
+    x0 = w - bw - 4 * s;
+    for (int y = 0; y < bh; y++) {  /* darken the box behind the text */
+        u32 *row = (u32 *)((u8 *)dst + (size_t)(y + 4 * s) * pitch) + x0;
+        for (int x = 0; x < bw; x++) row[x] = 0xff000000u | (row[x] >> 2 & 0x3f3f3f);
+    }
+    for (int i = 0; txt[i]; i++)
+        for (int gy = 0; gy < 8 * s; gy++) {
+            u32 *row = (u32 *)((u8 *)dst + (size_t)(gy + 6 * s) * pitch) + x0 + 2 * s + i * 8 * s;
+            unsigned char bits = (unsigned char)font8x8_basic[(unsigned char)txt[i] & 127][gy / s];
+            for (int gx = 0; gx < 8 * s; gx++)
+                if (bits >> (gx / s) & 1) row[gx] = 0xffffe060u;  /* amber */
+        }
 }
 
 /* ---- USER32 Import Implementations ---------------------------------------------------- */

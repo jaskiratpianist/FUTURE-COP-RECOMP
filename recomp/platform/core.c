@@ -8,6 +8,8 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #include "host.h"
+void win_set_fps(int max);  /* u32_win.c */
+extern int win_fps_counter;
 
 /* guest address space layout */
 #define TIB_ADDR    0x00010000u
@@ -71,6 +73,36 @@ u32 galloc_aligned(u32 size, u32 align)
 }
 
 u32 galloc(u32 size) { return galloc_aligned(size ? size : 1, 16); }
+
+/* FCOP_INPUT "t:scan=N" (debugging): log where guest memory (the image's data and the heap)
+   holds the 16-bit value N; later scans only look at the places the previous one found
+   ("scan=?" shows what those places hold now) */
+void plat_scan16(u32 v)
+{
+    static u32 *hits;
+    static u32 nhits;
+    if (v == ~0u) {
+        for (u32 k = 0; k < nhits && k < 200; k++) plat_log("  0x%08x: %u", hits[k], rd16(hits[k]));
+        return;
+    }
+    u32 a, n = 0, cap = 4096, *found = malloc(cap * sizeof *found);
+    if (hits) {
+        for (u32 k = 0; k < nhits; k++)
+            if (rd16(hits[k]) == (u16)v) found[n++] = hits[k];
+    } else {
+        for (a = 0x48b000u; a < arena_top; a += 2) {
+            if (a == IMAGE_HI) a = ARENA_LO;
+            if (rd16(a) != (u16)v) continue;
+            if (n == cap) found = realloc(found, (cap *= 2) * sizeof *found);
+            found[n++] = a;
+        }
+    }
+    free(hits);
+    hits = found;
+    nhits = n;
+    plat_log("scan %u: %u places%s", v, n, n > 40 ? " (first 40)" : "");
+    for (u32 k = 0; k < n && k < 40; k++) plat_log("  0x%08x", found[k]);
+}
 
 void gfree(u32 p)
 {
@@ -414,12 +446,19 @@ int main(int argc, char **argv)
     unsigned k;
     int missing = 0;
     if (setup_paths(argc, argv)) return 1;
-    {   /* missions run at 60 fps (the original waits 8 ticks of 1/300 s: 37.5 fps); FCOP_FPS=37
-           gives the original rate */
-        const char *fps = getenv("FCOP_FPS");
-        int f = fps ? atoi(fps) : 60;
-        rt_frame_ticks = f > 0 ? (u32)((300 + f / 2) / f) : 8;
-        if (rt_frame_ticks < 1) rt_frame_ticks = 1;
+    {   /* mission frame rate (u32_win.c win_set_fps; the original waits 8 ticks of 1/300 s: 37.5
+           fps): the Preferences setting, or FCOP_FPS_MAX (0 = unlimited, 37 = original).
+           FCOP_FPS=N waits for whole ticks instead, as the original does, without pacing. */
+        const char *fps = getenv("FCOP_FPS"), *max = getenv("FCOP_FPS_MAX");
+        win_set_fps(max && *max ? atoi(max) : reg_setting("FrameRate", 90));
+        win_fps_counter = reg_setting("ShowFPS", 0) != 0;
+        if (fps) {
+            int f = atoi(fps);
+            rt_frame_ticks = f > 0 ? (u32)((300 + f / 2) / f) : 8;
+            if (rt_frame_ticks < 1) rt_frame_ticks = 1;
+            rt_frame_hook = NULL;
+            rt_clock_hook = NULL;
+        }
     }
     MEM = mmap(NULL, 1ull << 32, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
     if (MEM == MAP_FAILED) { perror("mmap 4GB"); return 1; }

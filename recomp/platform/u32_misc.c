@@ -66,7 +66,7 @@ static u32 imp_GetAsyncKeyState(Cpu *c)
     if (vk == 0x11 /* VK_CONTROL */ && (vk_down[0xa2] || vk_down[0xa3])) down = 1;
     if (vk == 0x12 /* VK_MENU */ && (vk_down[0xa4] || vk_down[0xa5])) down = 1;
     if (!down && arrow_alias_down(vk)) down = 1;
-    if (getenv("FCOP_TRACE_KEYS")) {  /* each key the game asks about, and every press it sees */
+    if (ENV_ON("FCOP_TRACE_KEYS")) {  /* each key the game asks about, and every press it sees */
         static u8 seen[256];
         if (!seen[vk] || down) plat_log("GetAsyncKeyState(0x%02x) -> %s (from 0x%08x)", vk, down ? "down" : "up", rd32(c->r[4]));
         seen[vk] = 1;

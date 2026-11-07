@@ -7,6 +7,8 @@
 
 u8 *MEM;
 u32 rt_frame_ticks = 8;
+u32 (*rt_frame_hook)(u32 ticks);
+u32 (*rt_clock_hook)(u32 clock);
 
 struct entry { u32 addr; void (*fn)(Cpu *); };
 extern const struct entry recomp_table[];
@@ -83,7 +85,7 @@ double rt_frnd(Cpu *c, double x)
     }
 }
 
-s64 rt_fist(Cpu *c, double x)
+s64 rt_fist_slow(Cpu *c, double x)
 {
     double r = rt_frnd(c, x);
     if (r != r || r >= 9223372036854775808.0 || r < -9223372036854775808.0)
